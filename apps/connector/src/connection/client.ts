@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import type { AuthenticateMessage, BackendMessage, HeartbeatMessage, OperationRequest, PairingRequest, PermissionsUpdateMessage } from "../../../../packages/protocol/src/index.js";
+import type { AuthenticateMessage, BackendMessage, HeartbeatMessage, OperationRequest, PairingRequest, PermissionsUpdateMessage, TaskCancelMessage, TaskProgressMessage } from "../../../../packages/protocol/src/index.js";
 import { loadOrCreateIdentity, loadAccessToken, saveAccessToken } from "../identity/identity.js";
 import type { ConnectorCore } from "../core/connector-core.js";
 
@@ -18,6 +18,7 @@ export class ConnectorClient {
   private heartbeatTimer?: NodeJS.Timeout;
   private reconnectTimer?: NodeJS.Timeout;
   private reconnectAttempt = 0;
+  private readonly cancelledTasks = new Set<string>();
   private firstConnectionResolved = false;
   private readonly identity = loadOrCreateIdentity();
 
@@ -85,6 +86,10 @@ export class ConnectorClient {
       if (update.connectorId === this.identity.connectorId) this.options.core?.updatePermissions(update.permissions);
       return;
     }
+    if (message.type === "task.cancel") {
+      this.cancelledTasks.add((message as TaskCancelMessage).taskId);
+      return;
+    }
     if (message.type === "operation.request") this.handleOperation(message);
   }
 
@@ -117,15 +122,32 @@ export class ConnectorClient {
 
   private handleOperation(request: OperationRequest): void {
     if (!this.authenticated) return;
-    const operation = this.options.core
-      ? this.options.core.execute(request.operation, request.input).then((value) => this.sendResult(request.requestId, true, value)).catch((error) => this.sendResult(request.requestId, false, undefined, error instanceof Error ? error.message : String(error)))
-      : Promise.resolve(this.sendResult(request.requestId, true, { connectorId: this.identity.connectorId, platform: process.platform, nodeVersion: process.version, checkedAt: new Date().toISOString() }));
+    const taskId = request.taskId;
+    if (taskId) this.sendProgress(taskId, 10, "Started");
+    const work = this.options.core
+      ? this.options.core.execute(request.operation, request.input)
+      : Promise.resolve({ connectorId: this.identity.connectorId, platform: process.platform, nodeVersion: process.version, checkedAt: new Date().toISOString() });
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connector operation timeout")), request.timeoutMs ?? 30_000));
+    const operation = Promise.race([work, timeout]).then((value) => {
+      if (taskId && this.cancelledTasks.has(taskId)) { this.cancelledTasks.delete(taskId); return; }
+      if (taskId) this.sendProgress(taskId, 90, "Execution complete");
+      this.sendResult(request.requestId, true, value, undefined, taskId);
+    }).catch((error) => {
+      if (taskId && this.cancelledTasks.has(taskId)) { this.cancelledTasks.delete(taskId); return; }
+      this.sendResult(request.requestId, false, undefined, error instanceof Error ? error.message : String(error), taskId);
+    });
     void operation;
   }
 
-  private sendResult(requestId: string, ok: boolean, result?: Record<string, unknown>, error?: string): void {
+  private sendProgress(taskId: string, progress: number, message: string): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
-    this.socket.send(JSON.stringify({ type: "operation.result", requestId, ok, result, error: error ? { code: "OPERATION_FAILED", message: error } : undefined }));
+    const event: TaskProgressMessage = { type: "task.progress", taskId, progress, message };
+    this.socket.send(JSON.stringify(event));
+  }
+
+  private sendResult(requestId: string, ok: boolean, result?: Record<string, unknown>, error?: string, taskId?: string): void {
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return;
+    this.socket.send(JSON.stringify({ type: "operation.result", requestId, taskId, ok, result, error: error ? { code: "OPERATION_FAILED", message: error } : undefined }));
   }
 
   stop(): void {
@@ -133,6 +155,7 @@ export class ConnectorClient {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     this.reconnectTimer = undefined;
     this.stopHeartbeat();
-    this.socket?.close();
+    if (this.socket && this.socket.readyState === WebSocket.OPEN) this.socket.close();
+    if (this.socket && this.socket.readyState !== WebSocket.CLOSED) this.socket.terminate();
   }
 }

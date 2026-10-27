@@ -42,6 +42,8 @@ export interface OperationRequest {
   requestId: string;
   operation: "health.check" | "system.info" | "models.discover" | "models.execute" | "filesystem.list" | "filesystem.read" | "filesystem.write" | "git.status" | "process.list" | "terminal.execute";
   input?: Record<string, unknown>;
+  taskId?: string;
+  timeoutMs?: number;
 }
 
 export interface OperationResult {
@@ -50,7 +52,20 @@ export interface OperationResult {
   ok: boolean;
   result?: Record<string, unknown>;
   error?: { code: string; message: string };
+  taskId?: string;
 }
 
-export type ConnectorMessage = PairingRequest | AuthenticateMessage | HeartbeatMessage | OperationResult;
-export type BackendMessage = PairingAccepted | PermissionsUpdateMessage | OperationRequest;
+export interface TaskProgressMessage {
+  type: "task.progress";
+  taskId: string;
+  progress: number;
+  message?: string;
+}
+
+export interface TaskCancelMessage {
+  type: "task.cancel";
+  taskId: string;
+}
+
+export type ConnectorMessage = PairingRequest | AuthenticateMessage | HeartbeatMessage | OperationResult | TaskProgressMessage;
+export type BackendMessage = PairingAccepted | PermissionsUpdateMessage | OperationRequest | TaskCancelMessage;

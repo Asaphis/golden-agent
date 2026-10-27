@@ -42,6 +42,8 @@ export class ConnectorCore {
   async execute(operation: string, input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     if (operation === "health.check") {
       this.require("connector.health");
+      const delayMs = Math.min(Math.max(Number(input.delayMs ?? 0), 0), 60_000);
+      if (delayMs) await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
       return { healthy: true, checkedAt: new Date().toISOString(), capabilities: this.getCapabilities() };
     }
     if (operation === "system.info") {

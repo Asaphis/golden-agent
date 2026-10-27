@@ -13,6 +13,25 @@ export interface ConnectorRecord {
   lastSeenAt: string | null;
 }
 
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
+export interface TaskRecord {
+  taskId: string;
+  connectorId: string;
+  operation: string;
+  input: Record<string, unknown>;
+  status: TaskStatus;
+  progress: number;
+  progressMessage: string | null;
+  result: Record<string, unknown> | null;
+  error: { code: string; message: string } | null;
+  timeoutMs: number;
+  attempts: number;
+  artifactMetadata: Array<Record<string, unknown>>;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
 export class Database {
   readonly db: DatabaseSync;
 
@@ -50,6 +69,23 @@ export class Database {
         connector_id TEXT,
         details_json TEXT NOT NULL,
         created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS tasks (
+        task_id TEXT PRIMARY KEY,
+        connector_id TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        input_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        progress INTEGER NOT NULL DEFAULT 0,
+        progress_message TEXT,
+        result_json TEXT,
+        error_json TEXT,
+        timeout_ms INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        artifacts_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        finished_at TEXT
       );
     `);
   }
@@ -124,6 +160,26 @@ export class Database {
       JSON.stringify(details),
       new Date().toISOString(),
     );
+  }
+
+  createTask(task: TaskRecord): void {
+    this.db.prepare(`INSERT INTO tasks
+      (task_id, connector_id, operation, input_json, status, progress, progress_message, result_json, error_json, timeout_ms, attempts, artifacts_json, created_at, started_at, finished_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(task.taskId, task.connectorId, task.operation, JSON.stringify(task.input), task.status, task.progress, task.progressMessage, null, null, task.timeoutMs, task.attempts, JSON.stringify(task.artifactMetadata), task.createdAt, task.startedAt, task.finishedAt);
+  }
+
+  getTask(taskId: string): TaskRecord | null {
+    const row = this.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(taskId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return { taskId: String(row.task_id), connectorId: String(row.connector_id), operation: String(row.operation), input: JSON.parse(String(row.input_json)), status: row.status as TaskStatus, progress: Number(row.progress), progressMessage: row.progress_message ? String(row.progress_message) : null, result: row.result_json ? JSON.parse(String(row.result_json)) : null, error: row.error_json ? JSON.parse(String(row.error_json)) : null, timeoutMs: Number(row.timeout_ms), attempts: Number(row.attempts), artifactMetadata: JSON.parse(String(row.artifacts_json)), createdAt: String(row.created_at), startedAt: row.started_at ? String(row.started_at) : null, finishedAt: row.finished_at ? String(row.finished_at) : null };
+  }
+
+  updateTask(taskId: string, patch: Partial<Pick<TaskRecord, "status" | "progress" | "progressMessage" | "result" | "error" | "attempts" | "startedAt" | "finishedAt" | "artifactMetadata">>): void {
+    const current = this.getTask(taskId);
+    if (!current) return;
+    const next = { ...current, ...patch };
+    this.db.prepare("UPDATE tasks SET status = ?, progress = ?, progress_message = ?, result_json = ?, error_json = ?, attempts = ?, artifacts_json = ?, started_at = ?, finished_at = ? WHERE task_id = ?").run(next.status, next.progress, next.progressMessage, next.result ? JSON.stringify(next.result) : null, next.error ? JSON.stringify(next.error) : null, next.attempts, JSON.stringify(next.artifactMetadata), next.startedAt, next.finishedAt, taskId);
   }
 
   close(): void {
