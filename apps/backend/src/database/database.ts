@@ -107,6 +107,11 @@ export class Database {
     this.db.prepare("UPDATE connectors SET status = 'online', last_seen_at = ? WHERE connector_id = ? AND status != 'revoked'").run(timestamp, connectorId);
   }
 
+  updatePermissions(connectorId: string, permissions: string[]): boolean {
+    const result = this.db.prepare("UPDATE connectors SET permissions_json = ? WHERE connector_id = ? AND status != 'revoked'").run(JSON.stringify(permissions), connectorId);
+    return Number(result.changes) > 0;
+  }
+
   revokeConnector(connectorId: string): boolean {
     const result = this.db.prepare("UPDATE connectors SET status = 'revoked', access_token = NULL WHERE connector_id = ?").run(connectorId);
     return Number(result.changes) > 0;

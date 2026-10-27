@@ -1,0 +1,20 @@
+[Unit]
+Description=Golden Agent Connector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=%h/golden-agent
+ExecStart=/usr/bin/env pnpm dev:connector service
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.data
+
+[Install]
+WantedBy=default.target

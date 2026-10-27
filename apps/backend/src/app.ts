@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer, type WebSocket } from "ws";
 import { Database } from "./database/database.js";
 import { ConnectorService } from "./modules/connectors/connector.service.js";
-import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest } from "../../../packages/protocol/src/index.js";
+import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission } from "../../../packages/protocol/src/index.js";
 
 export interface BackendApp {
   server: ReturnType<typeof createServer>;
@@ -30,6 +30,7 @@ function requestBody(request: IncomingMessage): Promise<Record<string, unknown>>
 export function createBackendApp(databasePath = process.env.DATABASE_PATH): BackendApp {
   const database = new Database(databasePath);
   const connectors = new ConnectorService(database);
+  const activeSockets = new Map<string, WebSocket>();
   const server = createServer(async (request, response) => {
     try {
       if (request.method === "GET" && request.url === "/health") return json(response, 200, { ok: true, service: "golden-agent-backend" });
@@ -39,10 +40,28 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         const ok = connectors.revoke(revokeMatch[1]);
         return json(response, ok ? 200 : 404, { ok });
       }
+      const permissionsMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/permissions$/);
+      if (request.method === "POST" && permissionsMatch) {
+        const body = await requestBody(request);
+        const permissions = Array.isArray(body.permissions) ? body.permissions.map(String) as Permission[] : [];
+        const ok = connectors.updatePermissions(permissionsMatch[1], permissions);
+        return json(response, ok ? 200 : 404, { ok, permissions });
+      }
+      const operationMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/operations$/);
+      if (request.method === "POST" && operationMatch) {
+        const body = await requestBody(request);
+        const socket = activeSockets.get(operationMatch[1]);
+        const operation = typeof body.operation === "string" ? body.operation as Parameters<ConnectorService["requestOperation"]>[2] : undefined;
+        if (!socket || !operation) return json(response, 409, { ok: false, error: "CONNECTOR_OFFLINE_OR_INVALID_OPERATION" });
+        const requestId = connectors.requestOperation(operationMatch[1], socket, operation, body.input as Record<string, unknown> | undefined);
+        return requestId ? json(response, 202, { ok: true, requestId }) : json(response, 403, { ok: false, error: "PERMISSION_DENIED" });
+      }
       const statusMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)$/);
       if (request.method === "GET" && statusMatch) {
         const record = connectors.getConnector(statusMatch[1]);
-        return record ? json(response, 200, record) : json(response, 404, { error: "CONNECTOR_NOT_FOUND" });
+        if (!record) return json(response, 404, { error: "CONNECTOR_NOT_FOUND" });
+        const { accessToken: _accessToken, ...publicRecord } = record;
+        return json(response, 200, publicRecord);
       }
       if (request.method === "POST" && request.url === "/v1/connectors/test-pairing") {
         const body = await requestBody(request);
@@ -70,6 +89,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
           const accepted = connectors.pair(message as PairingRequest, socket);
           if (!accepted) { socket.close(4003, "Invalid or expired pairing code"); return; }
           connectorId = accepted.connectorId;
+          activeSockets.set(connectorId, socket);
           socket.send(JSON.stringify(accepted));
           return;
         }
@@ -97,6 +117,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     socket.on("close", () => {
       // Connection state is persisted by heartbeat and explicit revocation.
       // Do not query the database during shutdown after it has been closed.
+      if (connectorId && activeSockets.get(connectorId) === socket) activeSockets.delete(connectorId);
     });
 
     (socket as WebSocket & { authenticate?: (token: string) => void }).authenticate = (token: string) => {

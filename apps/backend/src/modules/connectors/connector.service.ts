@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type { WebSocket } from "ws";
 import type { HeartbeatMessage, OperationRequest, OperationResult, PairingAccepted, PairingRequest, Permission } from "../../../../../packages/protocol/src/index.js";
 import { Database } from "../../database/database.js";
@@ -21,13 +21,14 @@ export class ConnectorService {
     if (!this.database.consumePairing(request.pairingCode)) return null;
     const deviceId = randomUUID();
     const accessToken = randomBytes(32).toString("hex");
+    const accessTokenHash = createHash("sha256").update(accessToken).digest("hex");
     this.database.createConnector({
       connectorId: request.connectorId,
       deviceId,
       deviceName: request.deviceName,
       platform: request.platform,
       status: "pending",
-      accessToken,
+      accessToken: accessTokenHash,
       permissions: DEFAULT_PERMISSIONS,
       lastSeenAt: null,
     });
@@ -37,7 +38,8 @@ export class ConnectorService {
 
   authenticate(connectorId: string, accessToken: string): boolean {
     const record = this.database.getConnector(connectorId);
-    return Boolean(record && record.status !== "revoked" && record.accessToken === accessToken);
+    const accessTokenHash = createHash("sha256").update(accessToken).digest("hex");
+    return Boolean(record && record.status !== "revoked" && record.accessToken === accessTokenHash);
   }
 
   heartbeat(message: HeartbeatMessage): void {
@@ -46,12 +48,24 @@ export class ConnectorService {
   }
 
   requestHealthCheck(connectorId: string, socket: WebSocket): string | null {
+    return this.requestOperation(connectorId, socket, "health.check");
+  }
+
+  requestOperation(connectorId: string, socket: WebSocket, operation: OperationRequest["operation"], input?: Record<string, unknown>): string | null {
     const record = this.database.getConnector(connectorId);
-    if (!record || !record.permissions.includes("connector.health") || record.status === "revoked") return null;
+    const requiredPermission: Permission = operation === "models.discover" ? "model.discovery"
+      : operation === "models.execute" ? "model.use"
+      : operation === "filesystem.list" || operation === "filesystem.read" ? "filesystem.read"
+      : operation === "filesystem.write" ? "filesystem.write"
+      : operation === "git.status" ? "git.read"
+      : operation === "process.list" ? "process.manage"
+      : operation === "terminal.execute" ? "terminal.execute"
+      : "connector.health";
+    if (!record || !record.permissions.includes(requiredPermission) || record.status === "revoked") return null;
     const requestId = randomUUID();
-    const message: OperationRequest = { type: "operation.request", requestId, operation: "health.check" };
+    const message: OperationRequest = { type: "operation.request", requestId, operation, input };
     socket.send(JSON.stringify(message));
-    this.database.addAudit("operation.requested", connectorId, { requestId, operation: message.operation });
+    this.database.addAudit("operation.requested", connectorId, { requestId, operation, requiredPermission });
     return requestId;
   }
 
@@ -62,6 +76,12 @@ export class ConnectorService {
   revoke(connectorId: string): boolean {
     const changed = this.database.revokeConnector(connectorId);
     if (changed) this.database.addAudit("connector.revoked", connectorId, {});
+    return changed;
+  }
+
+  updatePermissions(connectorId: string, permissions: Permission[]): boolean {
+    const changed = this.database.updatePermissions(connectorId, permissions);
+    if (changed) this.database.addAudit("connector.permissions.updated", connectorId, { permissions });
     return changed;
   }
 

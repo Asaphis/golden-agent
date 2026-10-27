@@ -34,7 +34,7 @@ export interface AuthenticateMessage {
 export interface OperationRequest {
   type: "operation.request";
   requestId: string;
-  operation: "health.check" | "system.info" | "models.discover" | "filesystem.list" | "git.status";
+  operation: "health.check" | "system.info" | "models.discover" | "models.execute" | "filesystem.list" | "filesystem.read" | "filesystem.write" | "git.status" | "process.list" | "terminal.execute";
   input?: Record<string, unknown>;
 }
 

@@ -9,7 +9,10 @@ export class ConnectorServiceRuntime {
   private startedAt?: string;
 
   constructor(pairingCode?: string) {
-    this.core = new ConnectorCore({ allowedRoots: [process.cwd()], permissions: ["connector.health", "model.discovery"] });
+    const allowedRoots = (process.env.CONNECTOR_ALLOWED_ROOTS ?? process.cwd()).split(",").map((value) => value.trim()).filter(Boolean);
+    const permissions = (process.env.CONNECTOR_PERMISSIONS ?? "connector.health,model.discovery").split(",").map((value) => value.trim()).filter(Boolean) as import("../../../../packages/protocol/src/index.js").Permission[];
+    const allowedTerminalCommands = (process.env.CONNECTOR_TERMINAL_COMMANDS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
+    this.core = new ConnectorCore({ allowedRoots, permissions, allowedTerminalCommands });
     this.client = new ConnectorClient({ serverUrl: process.env.CONNECTOR_SERVER_URL ?? "ws://127.0.0.1:4100/connect", pairingCode, core: this.core });
     this.ipc = new IpcServer({ core: this.core, getStatus: () => ({ startedAt: this.startedAt, connected: this.client.isConnected(), capabilities: this.core.getCapabilities() }) });
   }
