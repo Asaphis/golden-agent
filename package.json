@@ -8,6 +8,7 @@
     "dev:connector": "tsx apps/connector/src/main.ts",
     "build": "tsc -b",
     "build:connector": "tsc -b",
+    "build:desktop": "pnpm --filter @golden-agent/desktop build",
     "start:connector": "node dist/apps/connector/src/main.js service",
     "validate:packaging": "bash scripts/release/validate-packaging.sh",
     "release:check": "bash scripts/release/release-check.sh",

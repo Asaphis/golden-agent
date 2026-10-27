@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 pnpm build
+pnpm build:desktop
 pnpm validate:packaging
 pnpm test:connector
 if grep -RInE 'TODO|FIXME|not implemented|pretend|stub' apps packages --include='*.ts'; then
