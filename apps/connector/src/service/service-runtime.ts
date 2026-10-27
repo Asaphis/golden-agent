@@ -33,6 +33,7 @@ export class ConnectorServiceRuntime {
     this.metrics.increment("service.stop");
     log("info", "service.stopping");
     this.client.stop();
+    await this.core.dispose();
     await this.ipc.stop();
     log("info", "service.stopped");
   }

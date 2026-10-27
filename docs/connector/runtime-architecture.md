@@ -60,6 +60,6 @@ The current development transport is a Unix domain socket:
 
 The socket is created with mode `0600`, and every request must also include a per-installation secret stored with mode `0600`. Windows named-pipe transport and platform service installation are separate packaging tasks and must be tested on their target operating systems.
 
-## What is deliberately not claimed as complete
+## What remains outside the connector-runtime completion claim
 
-The desktop interface, browser automation, testing/build execution, macOS launchd integration, production PostgreSQL/Redis deployment, and platform-specific installer verification are not yet complete. Linux systemd, Windows guidance, and Termux documentation exist, but they must be tested on their target operating systems before release claims are made.
+The connector runtime capabilities are implemented and covered by the release check. The desktop/web/mobile interfaces, production PostgreSQL/Redis deployment, signed installer publication, external security review, and native Windows, macOS, Termux, and Docker installation tests remain separate product/release gates. The Linux systemd artifact is syntax-validated in this environment; the other platform artifacts are generated but require their native operating systems for final verification.

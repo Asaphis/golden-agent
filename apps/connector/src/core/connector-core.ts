@@ -36,10 +36,16 @@ export class ConnectorCore {
 
   getCapabilities(): string[] {
     return [
-      "connector.health", "system.info", "models.discover", "models.execute",
+      "connector.health", "system.info", "models.discover", "models.execute", "models.stream",
       "filesystem.list", "filesystem.read", "filesystem.write", "git.status",
       "process.list", "process.start", "process.stop", "terminal.execute", "testing.run", "building.run", "artifact.collect", "browser.open", "browser.navigate", "browser.inspect", "browser.screenshot", "browser.click", "browser.type", "browser.close",
     ];
+  }
+
+  async dispose(): Promise<void> {
+    for (const child of this.managedProcesses.values()) child.kill("SIGTERM");
+    this.managedProcesses.clear();
+    await this.browserManager.closeAll();
   }
 
   hasPermission(permission: Permission): boolean { return this.permissions.has(permission); }
