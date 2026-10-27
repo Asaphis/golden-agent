@@ -7,7 +7,7 @@
     "dev:backend": "tsx apps/backend/src/main.ts",
     "dev:connector": "tsx apps/connector/src/main.ts",
     "build": "tsc -b",
-    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts"
+    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
@@ -15,5 +15,8 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "ws": "^8.18.0"
+  },
+  "dependencies": {
+    "playwright": "^1.64.1"
   }
 }

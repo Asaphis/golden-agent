@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { Permission } from "../../../../packages/protocol/src/index.js";
 import type { ModelAdapter } from "../models/model-adapter.js";
 import { OllamaAdapter } from "../models/ollama-adapter.js";
+import { BrowserManager } from "../browser/browser-manager.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -14,6 +15,7 @@ export interface CoreOptions {
   permissions?: Permission[];
   allowedTerminalCommands?: string[];
   modelAdapter?: ModelAdapter;
+  browserManager?: BrowserManager;
 }
 
 export class ConnectorCore {
@@ -22,19 +24,21 @@ export class ConnectorCore {
   private readonly allowedTerminalCommands: Set<string>;
   private readonly managedProcesses = new Map<number, ChildProcess>();
   private readonly modelAdapter: ModelAdapter;
+  private readonly browserManager: BrowserManager;
 
   constructor(options: CoreOptions = {}) {
     this.allowedRoots = (options.allowedRoots ?? [process.cwd()]).map((root) => resolve(root));
     this.permissions = new Set(options.permissions ?? ["connector.health"]);
     this.allowedTerminalCommands = new Set(options.allowedTerminalCommands ?? []);
     this.modelAdapter = options.modelAdapter ?? new OllamaAdapter();
+    this.browserManager = options.browserManager ?? new BrowserManager();
   }
 
   getCapabilities(): string[] {
     return [
       "connector.health", "system.info", "models.discover", "models.execute",
       "filesystem.list", "filesystem.read", "filesystem.write", "git.status",
-      "process.list", "process.start", "process.stop", "terminal.execute", "testing.run", "building.run", "artifact.collect",
+      "process.list", "process.start", "process.stop", "terminal.execute", "testing.run", "building.run", "artifact.collect", "browser.open", "browser.navigate", "browser.inspect", "browser.screenshot", "browser.click", "browser.type", "browser.close",
     ];
   }
 
@@ -69,6 +73,34 @@ export class ConnectorCore {
       const chunks: string[] = [];
       for await (const chunk of this.modelAdapter.stream({ model: String(input.model ?? ""), prompt: String(input.prompt ?? ""), timeoutMs: Number(input.timeoutMs ?? 120_000) })) chunks.push(chunk);
       return { model: String(input.model ?? ""), provider: this.modelAdapter.provider, chunks, response: chunks.join("") };
+    }
+    if (operation === "browser.open") {
+      this.require("browser.use");
+      return await this.browserManager.open();
+    }
+    if (operation === "browser.navigate") {
+      this.require("browser.use");
+      return { ...(await this.browserManager.navigate(String(input.sessionId), String(input.url), Number(input.timeoutMs ?? 30_000))) };
+    }
+    if (operation === "browser.inspect") {
+      this.require("browser.use");
+      return { ...(await this.browserManager.inspect(String(input.sessionId))) };
+    }
+    if (operation === "browser.screenshot") {
+      this.require("browser.use");
+      return await this.browserManager.screenshot(String(input.sessionId));
+    }
+    if (operation === "browser.click") {
+      this.require("browser.use");
+      return await this.browserManager.click(String(input.sessionId), String(input.selector));
+    }
+    if (operation === "browser.type") {
+      this.require("browser.use");
+      return await this.browserManager.type(String(input.sessionId), String(input.selector), String(input.text ?? ""));
+    }
+    if (operation === "browser.close") {
+      this.require("browser.use");
+      return await this.browserManager.close(String(input.sessionId));
     }
     if (operation === "filesystem.list") {
       this.require("filesystem.read");
