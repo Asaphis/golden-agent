@@ -7,7 +7,7 @@
     "dev:backend": "tsx apps/backend/src/main.ts",
     "dev:connector": "tsx apps/connector/src/main.ts",
     "build": "tsc -b",
-    "test:connector": "tsx tests/integration/connector-flow.ts"
+    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -31,6 +31,12 @@ export interface AuthenticateMessage {
   accessToken: string;
 }
 
+export interface PermissionsUpdateMessage {
+  type: "permissions.update";
+  connectorId: string;
+  permissions: Permission[];
+}
+
 export interface OperationRequest {
   type: "operation.request";
   requestId: string;
@@ -47,4 +53,4 @@ export interface OperationResult {
 }
 
 export type ConnectorMessage = PairingRequest | AuthenticateMessage | HeartbeatMessage | OperationResult;
-export type BackendMessage = PairingAccepted | OperationRequest;
+export type BackendMessage = PairingAccepted | PermissionsUpdateMessage | OperationRequest;

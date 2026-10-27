@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import type { AuthenticateMessage, BackendMessage, HeartbeatMessage, OperationRequest, PairingRequest } from "../../../../packages/protocol/src/index.js";
+import type { AuthenticateMessage, BackendMessage, HeartbeatMessage, OperationRequest, PairingRequest, PermissionsUpdateMessage } from "../../../../packages/protocol/src/index.js";
 import { loadOrCreateIdentity, loadAccessToken, saveAccessToken } from "../identity/identity.js";
 import type { ConnectorCore } from "../core/connector-core.js";
 
@@ -78,6 +78,11 @@ export class ConnectorClient {
       console.log(`Connector paired: ${message.connectorId}`);
       console.log(`Granted permissions: ${message.permissions.join(", ")}`);
       if (!this.firstConnectionResolved) { this.firstConnectionResolved = true; resolve(); }
+      return;
+    }
+    if (message.type === "permissions.update") {
+      const update = message as PermissionsUpdateMessage;
+      if (update.connectorId === this.identity.connectorId) this.options.core?.updatePermissions(update.permissions);
       return;
     }
     if (message.type === "operation.request") this.handleOperation(message);

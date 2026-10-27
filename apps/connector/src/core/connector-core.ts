@@ -34,6 +34,11 @@ export class ConnectorCore {
 
   hasPermission(permission: Permission): boolean { return this.permissions.has(permission); }
 
+  updatePermissions(permissions: Permission[]): void {
+    this.permissions.clear();
+    for (const permission of permissions) this.permissions.add(permission);
+  }
+
   async execute(operation: string, input: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
     if (operation === "health.check") {
       this.require("connector.health");

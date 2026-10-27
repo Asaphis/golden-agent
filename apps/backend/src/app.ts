@@ -105,6 +105,8 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         if (message.type === "heartbeat") {
           if (!connectorId || !authenticated) { socket.close(4001, "Not authenticated"); return; }
           connectors.heartbeat(message as HeartbeatMessage);
+          const current = connectors.getConnector(connectorId);
+          if (current) socket.send(JSON.stringify({ type: "permissions.update", connectorId, permissions: current.permissions }));
           connectors.requestHealthCheck(message.connectorId, socket);
           return;
         }
