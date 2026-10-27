@@ -67,7 +67,7 @@ export class ConnectorService {
   requestOperation(connectorId: string, socket: WebSocket, operation: OperationRequest["operation"], input?: Record<string, unknown>): string | null {
     const record = this.database.getConnector(connectorId);
     const requiredPermission: Permission = operation === "models.discover" ? "model.discovery"
-      : operation === "models.execute" ? "model.use"
+      : operation === "models.execute" || operation === "models.stream" ? "model.use"
       : operation === "filesystem.list" || operation === "filesystem.read" || operation === "artifact.collect" ? "filesystem.read"
       : operation === "filesystem.write" ? "filesystem.write"
       : operation === "git.status" ? "git.read"
@@ -87,7 +87,7 @@ export class ConnectorService {
   createTask(connectorId: string, operation: OperationRequest["operation"], input: Record<string, unknown> = {}, timeoutMs = 30_000): TaskRecord | null {
     const connector = this.database.getConnector(connectorId);
     if (!connector || connector.status === "revoked") return null;
-    const requiredPermission: Permission = operation === "models.discover" ? "model.discovery" : operation === "models.execute" ? "model.use" : operation === "filesystem.list" || operation === "filesystem.read" || operation === "artifact.collect" ? "filesystem.read" : operation === "filesystem.write" ? "filesystem.write" : operation === "git.status" ? "git.read" : operation === "process.list" || operation === "process.start" || operation === "process.stop" ? "process.manage" : operation === "terminal.execute" ? "terminal.execute" : operation === "testing.run" ? "testing.execute" : operation === "building.run" ? "building.execute" : "connector.health";
+    const requiredPermission: Permission = operation === "models.discover" ? "model.discovery" : operation === "models.execute" || operation === "models.stream" ? "model.use" : operation === "filesystem.list" || operation === "filesystem.read" || operation === "artifact.collect" ? "filesystem.read" : operation === "filesystem.write" ? "filesystem.write" : operation === "git.status" ? "git.read" : operation === "process.list" || operation === "process.start" || operation === "process.stop" ? "process.manage" : operation === "terminal.execute" ? "terminal.execute" : operation === "testing.run" ? "testing.execute" : operation === "building.run" ? "building.execute" : "connector.health";
     if (!connector.permissions.includes(requiredPermission)) return null;
     const task: TaskRecord = { taskId: randomUUID(), connectorId, operation, input, status: "queued", progress: 0, progressMessage: null, result: null, error: null, timeoutMs: Math.min(Math.max(timeoutMs, 100), 300_000), attempts: 0, artifactMetadata: [], createdAt: new Date().toISOString(), startedAt: null, finishedAt: null };
     this.database.createTask(task);

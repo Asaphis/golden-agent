@@ -4,6 +4,8 @@ import { resolve, relative, isAbsolute } from "node:path";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { Permission } from "../../../../packages/protocol/src/index.js";
+import type { ModelAdapter } from "../models/model-adapter.js";
+import { OllamaAdapter } from "../models/ollama-adapter.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -11,6 +13,7 @@ export interface CoreOptions {
   allowedRoots?: string[];
   permissions?: Permission[];
   allowedTerminalCommands?: string[];
+  modelAdapter?: ModelAdapter;
 }
 
 export class ConnectorCore {
@@ -18,11 +21,13 @@ export class ConnectorCore {
   private readonly permissions: Set<Permission>;
   private readonly allowedTerminalCommands: Set<string>;
   private readonly managedProcesses = new Map<number, ChildProcess>();
+  private readonly modelAdapter: ModelAdapter;
 
   constructor(options: CoreOptions = {}) {
     this.allowedRoots = (options.allowedRoots ?? [process.cwd()]).map((root) => resolve(root));
     this.permissions = new Set(options.permissions ?? ["connector.health"]);
     this.allowedTerminalCommands = new Set(options.allowedTerminalCommands ?? []);
+    this.modelAdapter = options.modelAdapter ?? new OllamaAdapter();
   }
 
   getCapabilities(): string[] {
@@ -53,11 +58,17 @@ export class ConnectorCore {
     }
     if (operation === "models.discover") {
       this.require("model.discovery");
-      return { models: await this.discoverModels() };
+      return { models: await this.modelAdapter.discover() };
     }
     if (operation === "models.execute") {
       this.require("model.use");
-      return await this.executeModel(String(input.model ?? ""), String(input.prompt ?? ""));
+      return { ...(await this.modelAdapter.execute({ model: String(input.model ?? ""), prompt: String(input.prompt ?? ""), timeoutMs: Number(input.timeoutMs ?? 120_000) })) };
+    }
+    if (operation === "models.stream") {
+      this.require("model.use");
+      const chunks: string[] = [];
+      for await (const chunk of this.modelAdapter.stream({ model: String(input.model ?? ""), prompt: String(input.prompt ?? ""), timeoutMs: Number(input.timeoutMs ?? 120_000) })) chunks.push(chunk);
+      return { model: String(input.model ?? ""), provider: this.modelAdapter.provider, chunks, response: chunks.join("") };
     }
     if (operation === "filesystem.list") {
       this.require("filesystem.read");
