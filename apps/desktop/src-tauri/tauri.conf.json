@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Golden Agent Desktop",
+  "version": "0.1.0",
+  "identifier": "com.goldenagent.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @golden-agent/desktop dev",
+    "beforeBuildCommand": "pnpm --filter @golden-agent/desktop build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "Golden Agent Desktop", "width": 1180, "height": 820, "minWidth": 960, "minHeight": 680, "resizable": true }],
+    "security": { "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://ipc.localhost" }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
+}
