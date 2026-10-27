@@ -1,0 +1,19 @@
+{
+  "name": "golden-agent",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "dev:backend": "tsx apps/backend/src/main.ts",
+    "dev:connector": "tsx apps/connector/src/main.ts",
+    "build": "tsc -b",
+    "test:connector": "tsx tests/integration/connector-flow.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "ws": "^8.18.0"
+  }
+}
