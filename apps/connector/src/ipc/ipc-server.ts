@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:net";
 import { chmodSync, existsSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ConnectorCore } from "../core/connector-core.js";
 import { loadOrCreateIpcSecret } from "./ipc-auth.js";
 
@@ -10,6 +11,7 @@ export class IpcServer {
   private readonly socketPath: string;
   private server?: Server;
   private readonly secret = loadOrCreateIpcSecret();
+  private readonly usedNonces = new Set<string>();
 
   constructor(private readonly options: IpcServerOptions) { this.socketPath = resolve(options.socketPath ?? "./.data/connector/connector.sock"); }
 
@@ -29,8 +31,12 @@ export class IpcServer {
         const handleRequest = async () => {
           if (responded) return;
           try {
-            const request = JSON.parse(body.trim()) as { auth?: string; action?: string; operation?: string; input?: Record<string, unknown> };
+            if (Buffer.byteLength(body, "utf8") > 1_000_000) return respond({ ok: false, error: "IPC_REQUEST_TOO_LARGE" });
+            const request = JSON.parse(body.trim()) as { auth?: string; nonce?: string; action?: string; operation?: string; input?: Record<string, unknown> };
             if (request.auth !== this.secret) return respond({ ok: false, error: "IPC_AUTHENTICATION_FAILED" });
+            if (!request.nonce || this.usedNonces.has(request.nonce)) return respond({ ok: false, error: "IPC_REPLAY_DETECTED" });
+            this.usedNonces.add(request.nonce);
+            if (this.usedNonces.size > 10_000) this.usedNonces.clear();
             if (request.action === "status") respond({ ok: true, status: this.options.getStatus() });
             else if (request.action === "capabilities") respond({ ok: true, capabilities: this.options.core.getCapabilities() });
             else if (request.action === "execute" && request.operation) respond({ ok: true, result: await this.options.core.execute(request.operation, request.input) });

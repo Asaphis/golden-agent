@@ -1,5 +1,5 @@
 import WebSocket from "ws";
-import type { AuthenticateMessage, BackendMessage, HeartbeatMessage, OperationRequest, PairingRequest, PermissionsUpdateMessage, TaskCancelMessage, TaskProgressMessage } from "../../../../packages/protocol/src/index.js";
+import type { AuthenticateMessage, BackendMessage, HeartbeatMessage, OperationRequest, PairingRequest, PermissionsUpdateMessage, TaskCancelMessage, TaskProgressMessage, TokenRotatedMessage } from "../../../../packages/protocol/src/index.js";
 import { loadOrCreateIdentity, loadAccessToken, saveAccessToken } from "../identity/identity.js";
 import type { ConnectorCore } from "../core/connector-core.js";
 
@@ -83,11 +83,19 @@ export class ConnectorClient {
     }
     if (message.type === "permissions.update") {
       const update = message as PermissionsUpdateMessage;
-      if (update.connectorId === this.identity.connectorId) this.options.core?.updatePermissions(update.permissions);
+      if (update.connectorId === this.identity.connectorId) {
+        this.options.core?.updatePermissions(update.permissions);
+        if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: "permissions.acknowledged", connectorId: update.connectorId, permissions: update.permissions }));
+      }
       return;
     }
     if (message.type === "task.cancel") {
       this.cancelledTasks.add((message as TaskCancelMessage).taskId);
+      return;
+    }
+    if (message.type === "token.rotated") {
+      const rotation = message as TokenRotatedMessage;
+      if (rotation.connectorId === this.identity.connectorId) saveAccessToken(rotation.accessToken);
       return;
     }
     if (message.type === "operation.request") this.handleOperation(message);

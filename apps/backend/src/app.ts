@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer, type WebSocket } from "ws";
 import { Database } from "./database/database.js";
 import { ConnectorService } from "./modules/connectors/connector.service.js";
-import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission, TaskProgressMessage } from "../../../packages/protocol/src/index.js";
+import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission, TaskProgressMessage, PermissionsAcknowledgedMessage } from "../../../packages/protocol/src/index.js";
 
 export interface BackendApp {
   server: ReturnType<typeof createServer>;
@@ -19,7 +19,7 @@ function json(response: ServerResponse, status: number, body: unknown): void {
 function requestBody(request: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     let body = "";
-    request.on("data", (chunk) => { body += String(chunk); });
+    request.on("data", (chunk) => { body += String(chunk); if (Buffer.byteLength(body, "utf8") > 1_000_000) { reject(new Error("REQUEST_TOO_LARGE")); request.destroy(); } });
     request.on("end", () => {
       try { resolve(body ? JSON.parse(body) as Record<string, unknown> : {}); } catch (error) { reject(error); }
     });
@@ -32,14 +32,29 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   const connectors = new ConnectorService(database);
   const activeSockets = new Map<string, WebSocket>();
   const sockets = new Set<WebSocket>();
+  const rateWindows = new Map<string, { startedAt: number; count: number }>();
   const server = createServer(async (request, response) => {
     try {
+      const key = request.socket.remoteAddress ?? "unknown";
+      const now = Date.now();
+      const window = rateWindows.get(key);
+      const current = !window || now - window.startedAt >= 60_000 ? { startedAt: now, count: 1 } : { startedAt: window.startedAt, count: window.count + 1 };
+      rateWindows.set(key, current);
+      if (current.count > 120) return json(response, 429, { ok: false, error: "RATE_LIMITED" });
       if (request.method === "GET" && request.url === "/health") return json(response, 200, { ok: true, service: "golden-agent-backend" });
       if (request.method === "POST" && request.url === "/v1/connectors/pairing") return json(response, 201, connectors.createPairing());
       const revokeMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/revoke$/);
       if (request.method === "POST" && revokeMatch) {
         const ok = connectors.revoke(revokeMatch[1]);
+        if (ok) activeSockets.get(revokeMatch[1])?.terminate();
         return json(response, ok ? 200 : 404, { ok });
+      }
+      const rotateMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/rotate-token$/);
+      if (request.method === "POST" && rotateMatch) {
+        const rotated = connectors.rotateToken(rotateMatch[1]);
+        const socket = activeSockets.get(rotateMatch[1]);
+        if (rotated && socket) { socket.send(JSON.stringify({ type: "token.rotated", connectorId: rotateMatch[1], ...rotated })); socket.close(4001, "Token rotated"); }
+        return rotated ? json(response, 200, { ok: true, tokenExpiresAt: rotated.tokenExpiresAt }) : json(response, 404, { ok: false });
       }
       const permissionsMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/permissions$/);
       if (request.method === "POST" && permissionsMatch) {
@@ -148,6 +163,11 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         if (message.type === "task.progress") {
           if (!connectorId || !authenticated) { socket.close(4001, "Not authenticated"); return; }
           connectors.recordTaskProgress(message as TaskProgressMessage, connectorId);
+        }
+        if (message.type === "permissions.acknowledged") {
+          if (!connectorId || !authenticated) { socket.close(4001, "Not authenticated"); return; }
+          const acknowledgement = message as PermissionsAcknowledgedMessage;
+          if (acknowledgement.connectorId === connectorId) connectors.acknowledgePermissions(connectorId, acknowledgement.permissions);
         }
       } catch { socket.close(4002, "Invalid message"); }
     });

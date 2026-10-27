@@ -24,6 +24,7 @@ export class ConnectorService {
     const deviceId = randomUUID();
     const accessToken = randomBytes(32).toString("hex");
     const accessTokenHash = createHash("sha256").update(accessToken).digest("hex");
+    const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     this.database.createConnector({
       connectorId: request.connectorId,
       deviceId,
@@ -31,17 +32,27 @@ export class ConnectorService {
       platform: request.platform,
       status: "pending",
       accessToken: accessTokenHash,
+      tokenExpiresAt,
       permissions: DEFAULT_PERMISSIONS,
       lastSeenAt: null,
     });
     this.database.addAudit("connector.paired", request.connectorId, { deviceId, platform: request.platform });
-    return { type: "pairing.accepted", connectorId: request.connectorId, deviceId, accessToken, permissions: DEFAULT_PERMISSIONS };
+    return { type: "pairing.accepted", connectorId: request.connectorId, deviceId, accessToken, permissions: DEFAULT_PERMISSIONS, tokenExpiresAt };
   }
 
   authenticate(connectorId: string, accessToken: string): boolean {
     const record = this.database.getConnector(connectorId);
     const accessTokenHash = createHash("sha256").update(accessToken).digest("hex");
-    return Boolean(record && record.status !== "revoked" && record.accessToken === accessTokenHash);
+    return Boolean(record && record.status !== "revoked" && record.accessToken === accessTokenHash && (!record.tokenExpiresAt || record.tokenExpiresAt > new Date().toISOString()));
+  }
+
+  rotateToken(connectorId: string): { accessToken: string; tokenExpiresAt: string } | null {
+    const accessToken = randomBytes(32).toString("hex");
+    const tokenExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const changed = this.database.rotateAccessToken(connectorId, createHash("sha256").update(accessToken).digest("hex"), tokenExpiresAt);
+    if (!changed) return null;
+    this.database.addAudit("connector.token.rotated", connectorId, { tokenExpiresAt });
+    return { accessToken, tokenExpiresAt };
   }
 
   heartbeat(message: HeartbeatMessage): void {
@@ -143,6 +154,11 @@ export class ConnectorService {
     const changed = this.database.updatePermissions(connectorId, permissions);
     if (changed) this.database.addAudit("connector.permissions.updated", connectorId, { permissions });
     return changed;
+  }
+
+  acknowledgePermissions(connectorId: string, permissions: Permission[]): void {
+    const record = this.database.getConnector(connectorId);
+    if (record && JSON.stringify(record.permissions) === JSON.stringify(permissions)) this.database.addAudit("connector.permissions.acknowledged", connectorId, { permissions });
   }
 
   getConnector(connectorId: string) {

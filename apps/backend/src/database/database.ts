@@ -9,6 +9,7 @@ export interface ConnectorRecord {
   platform: string;
   status: "pending" | "online" | "offline" | "revoked";
   accessToken: string | null;
+  tokenExpiresAt: string | null;
   permissions: string[];
   lastSeenAt: string | null;
 }
@@ -88,6 +89,7 @@ export class Database {
         finished_at TEXT
       );
     `);
+    try { this.db.exec("ALTER TABLE connectors ADD COLUMN token_expires_at TEXT"); } catch { /* already migrated */ }
   }
 
   createPairing(id: string, code: string, expiresAt: string): void {
@@ -122,6 +124,7 @@ export class Database {
       JSON.stringify(record.permissions),
       record.lastSeenAt,
     );
+    this.db.prepare("UPDATE connectors SET token_expires_at = ? WHERE connector_id = ?").run(record.tokenExpiresAt, record.connectorId);
   }
 
   getConnector(connectorId: string): ConnectorRecord | null {
@@ -134,6 +137,7 @@ export class Database {
       platform: String(row.platform),
       status: row.status as ConnectorRecord["status"],
       accessToken: row.access_token ? String(row.access_token) : null,
+      tokenExpiresAt: row.token_expires_at ? String(row.token_expires_at) : null,
       permissions: JSON.parse(String(row.permissions_json)) as string[],
       lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null,
     };
@@ -145,6 +149,11 @@ export class Database {
 
   updatePermissions(connectorId: string, permissions: string[]): boolean {
     const result = this.db.prepare("UPDATE connectors SET permissions_json = ? WHERE connector_id = ? AND status != 'revoked'").run(JSON.stringify(permissions), connectorId);
+    return Number(result.changes) > 0;
+  }
+
+  rotateAccessToken(connectorId: string, tokenHash: string, expiresAt: string): boolean {
+    const result = this.db.prepare("UPDATE connectors SET access_token = ?, token_expires_at = ?, status = 'pending' WHERE connector_id = ? AND status != 'revoked'").run(tokenHash, expiresAt, connectorId);
     return Number(result.changes) > 0;
   }
 

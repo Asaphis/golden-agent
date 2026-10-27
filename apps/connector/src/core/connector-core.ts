@@ -1,5 +1,5 @@
 import os from "node:os";
-import { readFile, writeFile, readdir } from "node:fs/promises";
+import { readFile, writeFile, readdir, realpath } from "node:fs/promises";
 import { resolve, relative, isAbsolute } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -60,19 +60,19 @@ export class ConnectorCore {
     }
     if (operation === "filesystem.list") {
       this.require("filesystem.read");
-      const path = this.safePath(String(input.path ?? this.allowedRoots[0]));
+      const path = await this.safePath(String(input.path ?? this.allowedRoots[0]));
       return { path, entries: (await readdir(path, { withFileTypes: true })).map((item) => ({ name: item.name, type: item.isDirectory() ? "directory" : "file" })) };
     }
     if (operation === "filesystem.read") {
       this.require("filesystem.read");
-      const path = this.safePath(String(input.path));
+      const path = await this.safePath(String(input.path));
       const maxBytes = Math.min(Number(input.maxBytes ?? 1_000_000), 5_000_000);
       const content = await readFile(path, "utf8");
       return { path, content: content.slice(0, maxBytes), truncated: content.length > maxBytes };
     }
     if (operation === "filesystem.write") {
       this.require("filesystem.write");
-      const path = this.safePath(String(input.path));
+      const path = await this.safePath(String(input.path));
       const content = String(input.content ?? "");
       if (content.length > 5_000_000) throw new Error("File content exceeds the connector limit");
       await writeFile(path, content, "utf8");
@@ -80,7 +80,7 @@ export class ConnectorCore {
     }
     if (operation === "git.status") {
       this.require("git.read");
-      const path = this.safePath(String(input.path ?? this.allowedRoots[0]));
+      const path = await this.safePath(String(input.path ?? this.allowedRoots[0]));
       const result = await execFileAsync("git", ["-C", path, "status", "--short", "--branch"], { timeout: 10_000 });
       return { path, output: result.stdout };
     }
@@ -99,7 +99,7 @@ export class ConnectorCore {
   }
 
   private async command(command: string, args: string[], timeout: number): Promise<Record<string, unknown>> {
-    const result = await execFileAsync(command, args, { timeout, maxBuffer: 2_000_000 });
+    const result = await execFileAsync(command, args, { timeout, maxBuffer: 2_000_000, env: { PATH: process.env.PATH ?? "", LANG: "C", LC_ALL: "C", TMPDIR: process.env.TMPDIR ?? "/tmp" } });
     return { command, args, stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
   }
 
@@ -107,7 +107,7 @@ export class ConnectorCore {
     if (!this.permissions.has(permission)) throw new Error(`Permission denied: ${permission}`);
   }
 
-  private safePath(inputPath: string): string {
+  private async safePath(inputPath: string): Promise<string> {
     const candidate = resolve(inputPath);
     if (!isAbsolute(candidate)) throw new Error("Path must be absolute");
     const allowed = this.allowedRoots.some((root) => {
@@ -115,7 +115,23 @@ export class ConnectorCore {
       return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
     });
     if (!allowed) throw new Error("Path is outside the connector allowed roots");
-    return candidate;
+    try {
+      const canonical = await realpath(candidate);
+      if (!this.isAllowed(canonical)) throw new Error("Path resolves outside the connector allowed roots");
+      return canonical;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      const parent = await realpath(resolve(candidate, ".."));
+      if (!this.isAllowed(parent)) throw new Error("Path parent resolves outside the connector allowed roots");
+      return candidate;
+    }
+  }
+
+  private isAllowed(candidate: string): boolean {
+    return this.allowedRoots.some((root) => {
+      const rel = relative(root, candidate);
+      return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    });
   }
 
   private async discoverModels(): Promise<Array<Record<string, unknown>>> {

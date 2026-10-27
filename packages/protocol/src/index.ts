@@ -16,6 +16,7 @@ export interface PairingAccepted {
   deviceId: string;
   accessToken: string;
   permissions: Permission[];
+  tokenExpiresAt: string;
 }
 
 export interface HeartbeatMessage {
@@ -33,6 +34,19 @@ export interface AuthenticateMessage {
 
 export interface PermissionsUpdateMessage {
   type: "permissions.update";
+  connectorId: string;
+  permissions: Permission[];
+}
+
+export interface TokenRotatedMessage {
+  type: "token.rotated";
+  connectorId: string;
+  accessToken: string;
+  tokenExpiresAt: string;
+}
+
+export interface PermissionsAcknowledgedMessage {
+  type: "permissions.acknowledged";
   connectorId: string;
   permissions: Permission[];
 }
@@ -67,5 +81,5 @@ export interface TaskCancelMessage {
   taskId: string;
 }
 
-export type ConnectorMessage = PairingRequest | AuthenticateMessage | HeartbeatMessage | OperationResult | TaskProgressMessage;
-export type BackendMessage = PairingAccepted | PermissionsUpdateMessage | OperationRequest | TaskCancelMessage;
+export type ConnectorMessage = PairingRequest | AuthenticateMessage | HeartbeatMessage | OperationResult | TaskProgressMessage | PermissionsAcknowledgedMessage;
+export type BackendMessage = PairingAccepted | PermissionsUpdateMessage | TokenRotatedMessage | OperationRequest | TaskCancelMessage;
