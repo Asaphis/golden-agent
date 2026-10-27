@@ -5,16 +5,19 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=%i
 WorkingDirectory=%h/golden-agent
-ExecStart=/usr/bin/env pnpm dev:connector service
+EnvironmentFile=-%h/.config/golden-agent/connector.env
+ExecStart=/usr/bin/env node %h/golden-agent/dist/apps/connector/src/main.js service
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=%h/.data
+ReadWritePaths=%h/.data %h/.config/golden-agent
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=false
 
 [Install]
 WantedBy=default.target

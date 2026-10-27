@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.goldenagent.connector</string>
+  <key>WorkingDirectory</key><string>__PROJECT_PATH__</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/local/bin/node</string><string>__PROJECT_PATH__/dist/apps/connector/src/main.js</string><string>service</string></array>
+  <key>EnvironmentVariables</key>
+  <dict><key>CONNECTOR_SERVER_URL</key><string>ws://127.0.0.1:4100/connect</string><key>CONNECTOR_ALLOWED_ROOTS</key><string>__PROJECT_PATH__</string><key>CONNECTOR_PERMISSIONS</key><string>connector.health,model.discovery</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__HOME__/Library/Logs/GoldenAgent/connector.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/Library/Logs/GoldenAgent/connector.error.log</string>
+</dict>
+</plist>

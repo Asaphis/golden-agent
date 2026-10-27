@@ -7,6 +7,9 @@
     "dev:backend": "tsx apps/backend/src/main.ts",
     "dev:connector": "tsx apps/connector/src/main.ts",
     "build": "tsc -b",
+    "build:connector": "tsc -b",
+    "start:connector": "node dist/apps/connector/src/main.js service",
+    "validate:packaging": "bash scripts/release/validate-packaging.sh",
     "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts"
   },
   "devDependencies": {
