@@ -54,7 +54,7 @@ export interface PermissionsAcknowledgedMessage {
 export interface OperationRequest {
   type: "operation.request";
   requestId: string;
-  operation: "health.check" | "system.info" | "models.discover" | "models.execute" | "filesystem.list" | "filesystem.read" | "filesystem.write" | "git.status" | "process.list" | "terminal.execute";
+  operation: "health.check" | "system.info" | "models.discover" | "models.execute" | "filesystem.list" | "filesystem.read" | "filesystem.write" | "git.status" | "process.list" | "process.start" | "process.stop" | "terminal.execute" | "testing.run" | "building.run" | "artifact.collect";
   input?: Record<string, unknown>;
   taskId?: string;
   timeoutMs?: number;

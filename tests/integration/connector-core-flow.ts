@@ -25,6 +25,12 @@ async function main(): Promise<void> {
   assert.equal(typeof processList.processes, "object");
   const terminal = await core.execute("terminal.execute", { command: "node", args: ["-e", "process.stdout.write('ok')"] });
   assert.equal(terminal.stdout, "ok");
+  const started = await core.execute("process.start", { command: "node", args: ["-e", "setTimeout(() => {}, 10000)"] });
+  assert.equal(typeof started.pid, "number");
+  const stopped = await core.execute("process.stop", { pid: started.pid });
+  assert.equal(stopped.stopped, true);
+  const artifacts = await core.execute("artifact.collect", { path: root });
+  assert.equal(Array.isArray(artifacts.artifacts), true);
   await assert.rejects(() => core.execute("terminal.execute", { command: "sh", args: ["-c", "echo unsafe"] }), /not allowlisted/);
   const models = await core.execute("models.discover");
   assert.equal(Array.isArray(models.models), true);

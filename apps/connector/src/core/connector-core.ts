@@ -1,7 +1,7 @@
 import os from "node:os";
-import { readFile, writeFile, readdir, realpath } from "node:fs/promises";
+import { readFile, writeFile, readdir, realpath, stat } from "node:fs/promises";
 import { resolve, relative, isAbsolute } from "node:path";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import type { Permission } from "../../../../packages/protocol/src/index.js";
 
@@ -17,6 +17,7 @@ export class ConnectorCore {
   private readonly allowedRoots: string[];
   private readonly permissions: Set<Permission>;
   private readonly allowedTerminalCommands: Set<string>;
+  private readonly managedProcesses = new Map<number, ChildProcess>();
 
   constructor(options: CoreOptions = {}) {
     this.allowedRoots = (options.allowedRoots ?? [process.cwd()]).map((root) => resolve(root));
@@ -28,7 +29,7 @@ export class ConnectorCore {
     return [
       "connector.health", "system.info", "models.discover", "models.execute",
       "filesystem.list", "filesystem.read", "filesystem.write", "git.status",
-      "process.list", "terminal.execute",
+      "process.list", "process.start", "process.stop", "terminal.execute", "testing.run", "building.run", "artifact.collect",
     ];
   }
 
@@ -88,6 +89,36 @@ export class ConnectorCore {
       this.require("process.manage");
       return { processes: process.platform === "win32" ? await this.command("tasklist", [], 10_000) : await this.command("ps", ["-eo", "pid,comm,args"], 10_000) };
     }
+    if (operation === "process.start") {
+      this.require("process.manage");
+      const command = String(input.command ?? "");
+      const args = Array.isArray(input.args) ? input.args.map(String) : [];
+      if (!this.allowedTerminalCommands.has(command)) throw new Error(`Process command is not allowlisted: ${command}`);
+      const child = spawn(command, args, { stdio: "ignore", env: { PATH: process.env.PATH ?? "", LANG: "C", LC_ALL: "C", TMPDIR: process.env.TMPDIR ?? "/tmp" } });
+      if (!child.pid) throw new Error("Process failed to start");
+      this.managedProcesses.set(child.pid, child);
+      child.once("exit", () => this.managedProcesses.delete(child.pid!));
+      return { pid: child.pid, command, args, startedAt: new Date().toISOString() };
+    }
+    if (operation === "process.stop") {
+      this.require("process.manage");
+      const pid = Number(input.pid);
+      const child = this.managedProcesses.get(pid);
+      if (!child) throw new Error("Process is not managed by this connector");
+      child.kill("SIGTERM");
+      this.managedProcesses.delete(pid);
+      return { pid, stopped: true, stoppedAt: new Date().toISOString() };
+    }
+    if (operation === "testing.run" || operation === "building.run") {
+      this.require(operation === "testing.run" ? "testing.execute" : "building.execute");
+      const cwd = await this.safePath(String(input.path ?? this.allowedRoots[0]));
+      return await this.command("pnpm", [operation === "testing.run" ? "test" : "build"], Math.min(Number(input.timeoutMs ?? 120_000), 300_000), cwd);
+    }
+    if (operation === "artifact.collect") {
+      this.require("filesystem.read");
+      const root = await this.safePath(String(input.path ?? this.allowedRoots[0]));
+      return { root, artifacts: await this.collectArtifacts(root) };
+    }
     if (operation === "terminal.execute") {
       this.require("terminal.execute");
       const command = String(input.command ?? "");
@@ -98,9 +129,24 @@ export class ConnectorCore {
     throw new Error(`Unsupported operation: ${operation}`);
   }
 
-  private async command(command: string, args: string[], timeout: number): Promise<Record<string, unknown>> {
-    const result = await execFileAsync(command, args, { timeout, maxBuffer: 2_000_000, env: { PATH: process.env.PATH ?? "", LANG: "C", LC_ALL: "C", TMPDIR: process.env.TMPDIR ?? "/tmp" } });
+  private async command(command: string, args: string[], timeout: number, cwd?: string): Promise<Record<string, unknown>> {
+    const result = await execFileAsync(command, args, { timeout, cwd, maxBuffer: 2_000_000, env: { PATH: process.env.PATH ?? "", LANG: "C", LC_ALL: "C", TMPDIR: process.env.TMPDIR ?? "/tmp" } });
     return { command, args, stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+  }
+
+  private async collectArtifacts(root: string): Promise<Array<Record<string, unknown>>> {
+    const results: Array<Record<string, unknown>> = [];
+    const visit = async (directory: string): Promise<void> => {
+      for (const entry of await readdir(directory, { withFileTypes: true })) {
+        const path = resolve(directory, entry.name);
+        if (entry.isSymbolicLink()) continue;
+        if (entry.isDirectory()) await visit(path);
+        else { const details = await stat(path); results.push({ path, size: details.size, modifiedAt: details.mtime.toISOString() }); }
+        if (results.length >= 10_000) return;
+      }
+    };
+    await visit(root);
+    return results;
   }
 
   private require(permission: Permission): void {
