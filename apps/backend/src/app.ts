@@ -42,6 +42,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       rateWindows.set(key, current);
       if (current.count > 120) return json(response, 429, { ok: false, error: "RATE_LIMITED" });
       if (request.method === "GET" && request.url === "/health") return json(response, 200, { ok: true, service: "golden-agent-backend" });
+      if (request.method === "GET" && request.url === "/ready") return json(response, 200, { ok: true, ready: true, service: "golden-agent-backend", database: "connected" });
       if (request.method === "POST" && request.url === "/v1/connectors/pairing") return json(response, 201, connectors.createPairing());
       const revokeMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/revoke$/);
       if (request.method === "POST" && revokeMatch) {
