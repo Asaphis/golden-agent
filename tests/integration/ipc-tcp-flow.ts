@@ -38,6 +38,15 @@ async function main(): Promise<void> {
     const capabilities = await request({ auth: secret.trim(), nonce: randomUUID(), action: "capabilities" });
     if (capabilities.ok !== true || !Array.isArray(capabilities.capabilities)) throw new Error("TCP capabilities request failed");
 
+    const permissions = await request({ auth: secret.trim(), nonce: randomUUID(), action: "permissions" });
+    if (permissions.ok !== true || JSON.stringify(permissions.permissions) !== JSON.stringify(["connector.health"])) throw new Error("TCP permissions request failed");
+
+    const updated = await request({ auth: secret.trim(), nonce: randomUUID(), action: "update_permissions", input: { permissions: ["connector.health", "filesystem.read"] } });
+    if (updated.ok !== true || !(updated.permissions as string[])?.includes("filesystem.read")) throw new Error("TCP permission update failed");
+
+    const invalidPermission = await request({ auth: secret.trim(), nonce: randomUUID(), action: "update_permissions", input: { permissions: ["not-a-permission"] } });
+    if (invalidPermission.error !== "INVALID_PERMISSION") throw new Error("TCP invalid permission was not rejected");
+
     const unauthenticated = await request({ auth: "wrong", nonce: randomUUID(), action: "status" });
     if (unauthenticated.error !== "IPC_AUTHENTICATION_FAILED") throw new Error("TCP authentication failure was not rejected");
 

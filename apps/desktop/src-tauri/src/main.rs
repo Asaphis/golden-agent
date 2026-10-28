@@ -77,6 +77,21 @@ fn connector_capabilities() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+fn connector_permissions() -> Result<Vec<String>, String> {
+    let response = ipc_request(json!({ "action": "permissions" }))?;
+    response.get("permissions").and_then(Value::as_array).map(|items| items.iter().filter_map(Value::as_str).map(String::from).collect()).ok_or_else(|| response.to_string())
+}
+
+#[tauri::command]
+fn connector_update_permissions(permissions: Vec<String>) -> Result<Vec<String>, String> {
+    let response = ipc_request(json!({ "action": "update_permissions", "input": { "permissions": permissions } }))?;
+    if response.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Err(response.get("error").and_then(Value::as_str).unwrap_or("Permission update failed").to_string());
+    }
+    response.get("permissions").and_then(Value::as_array).map(|items| items.iter().filter_map(Value::as_str).map(String::from).collect()).ok_or_else(|| response.to_string())
+}
+
+#[tauri::command]
 fn connector_execute(operation: String, input: Value) -> Result<Value, String> {
     let response = ipc_request(json!({ "action": "execute", "operation": operation, "input": input }))?;
     if response.get("ok").and_then(Value::as_bool) == Some(false) {
@@ -102,7 +117,7 @@ fn connector_revoke() -> Result<Value, String> {
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![connector_status, connector_capabilities, connector_execute, connector_pair, connector_revoke])
+        .invoke_handler(tauri::generate_handler![connector_status, connector_capabilities, connector_permissions, connector_update_permissions, connector_execute, connector_pair, connector_revoke])
         .run(tauri::generate_context!())
         .expect("error while running Golden Agent Desktop");
 }

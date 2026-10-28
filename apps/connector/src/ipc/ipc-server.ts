@@ -4,6 +4,12 @@ import { resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ConnectorCore } from "../core/connector-core.js";
 import { loadOrCreateIpcSecret } from "./ipc-auth.js";
+import type { Permission } from "../../../../packages/protocol/src/index.js";
+
+const VALID_PERMISSIONS = new Set<Permission>([
+  "connector.health", "model.discovery", "model.use", "filesystem.read", "filesystem.write",
+  "terminal.execute", "git.read", "git.write", "browser.use", "process.manage", "testing.execute", "building.execute",
+]);
 
 export interface IpcServerOptions { socketPath?: string; host?: string; port?: number; transport?: "auto" | "unix" | "tcp"; core: ConnectorCore; getStatus: () => Record<string, unknown>; }
 
@@ -47,6 +53,13 @@ export class IpcServer {
             if (this.usedNonces.size > 10_000) this.usedNonces.clear();
             if (request.action === "status") respond({ ok: true, status: this.options.getStatus() });
             else if (request.action === "capabilities") respond({ ok: true, capabilities: this.options.core.getCapabilities() });
+            else if (request.action === "permissions") respond({ ok: true, permissions: this.options.core.getPermissions() });
+            else if (request.action === "update_permissions") {
+              const permissions = Array.isArray(request.input?.permissions) ? request.input.permissions.map(String) : [];
+              if (permissions.some((permission) => !VALID_PERMISSIONS.has(permission as Permission))) return respond({ ok: false, error: "INVALID_PERMISSION" });
+              this.options.core.updatePermissions(permissions as Permission[]);
+              respond({ ok: true, permissions: this.options.core.getPermissions() });
+            }
             else if (request.action === "execute" && request.operation) respond({ ok: true, result: await this.options.core.execute(request.operation, request.input) });
             else respond({ ok: false, error: "INVALID_IPC_REQUEST" });
           } catch (error) { respond({ ok: false, error: error instanceof Error ? error.message : "IPC_ERROR" }); }

@@ -12,6 +12,8 @@ export type PairingSession = { pairingId: string; pairingCode: string; expiresAt
 export type ConnectorBridge = {
   getStatus(): Promise<ConnectorStatus>;
   getCapabilities(): Promise<string[]>;
+  getPermissions(): Promise<string[]>;
+  updatePermissions(permissions: string[]): Promise<string[]>;
   execute(operation: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
   createPairingSession(): Promise<PairingSession>;
   pair(pairingCode: string): Promise<{ ok: boolean; message?: string }>;
@@ -39,6 +41,8 @@ const developmentStatus: ConnectorStatus = {
 export const connectorApi: ConnectorBridge = {
   async getStatus() { return runningInTauri() ? await invoke<ConnectorStatus>("connector_status") : nativeBridge()?.getStatus?.() ?? developmentStatus; },
   async getCapabilities() { return runningInTauri() ? await invoke<string[]>("connector_capabilities") : nativeBridge()?.getCapabilities?.() ?? developmentStatus.capabilities; },
+  async getPermissions() { return runningInTauri() ? await invoke<string[]>("connector_permissions") : developmentStatus.permissions ?? ["connector.health"]; },
+  async updatePermissions(permissions) { return runningInTauri() ? await invoke<string[]>("connector_update_permissions", { permissions }) : permissions; },
   async execute(operation, input = {}) { return runningInTauri() ? await invoke<Record<string, unknown>>("connector_execute", { operation, input }) : { ok: true, operation, input }; },
   async createPairingSession() {
     const backendUrl = (globalThis as typeof globalThis & { GOLDEN_AGENT_BACKEND_URL?: string }).GOLDEN_AGENT_BACKEND_URL ?? "http://127.0.0.1:4100";
