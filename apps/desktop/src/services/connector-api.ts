@@ -43,7 +43,7 @@ export const connectorApi: ConnectorBridge = {
   async getCapabilities() { return runningInTauri() ? await invoke<string[]>("connector_capabilities") : nativeBridge()?.getCapabilities?.() ?? developmentStatus.capabilities; },
   async getPermissions() { return runningInTauri() ? await invoke<string[]>("connector_permissions") : developmentStatus.permissions ?? ["connector.health"]; },
   async updatePermissions(permissions) { return runningInTauri() ? await invoke<string[]>("connector_update_permissions", { permissions }) : permissions; },
-  async execute(operation, input = {}) { return runningInTauri() ? await invoke<Record<string, unknown>>("connector_execute", { operation, input }) : { ok: true, operation, input }; },
+  async execute(operation, input = {}) { return runningInTauri() ? await invoke<Record<string, unknown>>("connector_execute", { operation, input }) : await nativeBridge()?.execute?.(operation, input) ?? { ok: true, operation, input }; },
   async createPairingSession() {
     const backendUrl = (globalThis as typeof globalThis & { GOLDEN_AGENT_BACKEND_URL?: string }).GOLDEN_AGENT_BACKEND_URL ?? "http://127.0.0.1:4100";
     const response = await fetch(`${backendUrl}/v1/connectors/pairing`, { method: "POST" });
