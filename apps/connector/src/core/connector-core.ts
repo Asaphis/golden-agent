@@ -50,6 +50,8 @@ export class ConnectorCore {
 
   hasPermission(permission: Permission): boolean { return this.permissions.has(permission); }
 
+  getPermissions(): Permission[] { return [...this.permissions]; }
+
   updatePermissions(permissions: Permission[]): void {
     this.permissions.clear();
     for (const permission of permissions) this.permissions.add(permission);

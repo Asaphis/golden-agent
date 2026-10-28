@@ -3,6 +3,7 @@ export type ConnectorStatus = {
   connected: boolean;
   startedAt?: string;
   capabilities: string[];
+  permissions?: string[];
   metrics?: { uptimeSeconds?: number; counters?: Record<string, number> };
 };
 
