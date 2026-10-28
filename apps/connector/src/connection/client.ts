@@ -26,6 +26,8 @@ export class ConnectorClient {
 
   isConnected(): boolean { return this.connected && this.authenticated; }
 
+  getConnectorId(): string { return this.identity.connectorId; }
+
   start(): Promise<void> {
     this.stopping = false;
     return new Promise((resolve, reject) => {

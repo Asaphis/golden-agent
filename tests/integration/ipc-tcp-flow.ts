@@ -35,6 +35,9 @@ async function main(): Promise<void> {
     const status = await request({ auth: secret.trim(), nonce, action: "status" });
     if (status.ok !== true || !(status.status as Record<string, unknown>)?.connected) throw new Error("TCP status request failed");
 
+    const diagnostics = await request({ auth: secret.trim(), nonce: randomUUID(), action: "diagnostics" });
+    if (diagnostics.ok !== true || !(diagnostics.diagnostics as Record<string, unknown>)?.connected) throw new Error("TCP diagnostics request failed");
+
     const capabilities = await request({ auth: secret.trim(), nonce: randomUUID(), action: "capabilities" });
     if (capabilities.ok !== true || !Array.isArray(capabilities.capabilities)) throw new Error("TCP capabilities request failed");
 

@@ -5,8 +5,13 @@ use std::env;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Child, Command};
+use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
+
+static CONNECTOR_PROCESS: OnceLock<Mutex<Option<Child>>> = OnceLock::new();
+
+fn connector_process() -> &'static Mutex<Option<Child>> { CONNECTOR_PROCESS.get_or_init(|| Mutex::new(None)) }
 
 fn connector_data_path(name: &str) -> PathBuf {
     if let Ok(path) = env::var("CONNECTOR_DATA_PATH") { return PathBuf::from(path).join(name); }
@@ -71,6 +76,12 @@ fn connector_status() -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn connector_diagnostics() -> Result<Value, String> {
+    let response = ipc_request(json!({ "action": "diagnostics" }))?;
+    response.get("diagnostics").cloned().or_else(|| response.get("status").cloned()).ok_or_else(|| response.to_string())
+}
+
+#[tauri::command]
 fn connector_capabilities() -> Result<Vec<String>, String> {
     let response = ipc_request(json!({ "action": "capabilities" }))?;
     response.get("capabilities").and_then(Value::as_array).map(|items| items.iter().filter_map(Value::as_str).map(String::from).collect()).ok_or_else(|| response.to_string())
@@ -103,11 +114,34 @@ fn connector_execute(operation: String, input: Value) -> Result<Value, String> {
 #[tauri::command]
 fn connector_pair(pairing_code: String) -> Result<Value, String> {
     if pairing_code.trim().is_empty() { return Err("Pairing code is required".to_string()); }
+    connector_start(Some(pairing_code))
+}
+
+#[tauri::command]
+fn connector_start(pairing_code: Option<String>) -> Result<Value, String> {
     let project_path = env::var("GOLDEN_AGENT_PROJECT_PATH").unwrap_or_else(|_| ".".to_string());
     let entry = PathBuf::from(&project_path).join("dist/apps/connector/src/main.js");
     if !entry.exists() { return Err(format!("Compiled connector entrypoint not found: {}", entry.display())); }
-    Command::new("node").arg(entry).arg("service").arg("--pairing-code").arg(pairing_code).spawn().map_err(|error| format!("Unable to start connector service: {error}"))?;
-    Ok(json!({ "ok": true, "message": "Connector service is starting with the pairing code." }))
+    let mut slot = connector_process().lock().map_err(|_| "Connector process lock is poisoned".to_string())?;
+    if let Some(child) = slot.as_mut() { if child.try_wait().map_err(|error| error.to_string())?.is_none() { return Ok(json!({ "ok": true, "message": "Connector service is already running." })); } }
+    let mut command = Command::new("node");
+    command.arg(entry).arg("service");
+    if let Some(code) = pairing_code.filter(|value| !value.trim().is_empty()) { command.arg("--pairing-code").arg(code); }
+    *slot = Some(command.spawn().map_err(|error| format!("Unable to start connector service: {error}"))?);
+    Ok(json!({ "ok": true, "message": "Connector service is starting." }))
+}
+
+#[tauri::command]
+fn connector_stop() -> Result<Value, String> {
+    let mut slot = connector_process().lock().map_err(|_| "Connector process lock is poisoned".to_string())?;
+    if let Some(mut child) = slot.take() { child.kill().map_err(|error| format!("Unable to stop connector service: {error}"))?; let _ = child.wait(); return Ok(json!({ "ok": true, "message": "Connector service stopped." })); }
+    Ok(json!({ "ok": true, "message": "No desktop-managed connector process was running." }))
+}
+
+#[tauri::command]
+fn connector_restart() -> Result<Value, String> {
+    let _ = connector_stop()?;
+    connector_start(None)
 }
 
 #[tauri::command]
@@ -117,7 +151,7 @@ fn connector_revoke() -> Result<Value, String> {
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![connector_status, connector_capabilities, connector_permissions, connector_update_permissions, connector_execute, connector_pair, connector_revoke])
+        .invoke_handler(tauri::generate_handler![connector_status, connector_diagnostics, connector_capabilities, connector_permissions, connector_update_permissions, connector_execute, connector_pair, connector_start, connector_stop, connector_restart, connector_revoke])
         .run(tauri::generate_context!())
         .expect("error while running Golden Agent Desktop");
 }

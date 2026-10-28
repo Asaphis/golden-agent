@@ -52,6 +52,7 @@ export class IpcServer {
             this.usedNonces.add(request.nonce);
             if (this.usedNonces.size > 10_000) this.usedNonces.clear();
             if (request.action === "status") respond({ ok: true, status: this.options.getStatus() });
+            else if (request.action === "diagnostics") respond({ ok: true, diagnostics: this.options.getStatus() });
             else if (request.action === "capabilities") respond({ ok: true, capabilities: this.options.core.getCapabilities() });
             else if (request.action === "permissions") respond({ ok: true, permissions: this.options.core.getPermissions() });
             else if (request.action === "update_permissions") {

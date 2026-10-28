@@ -17,7 +17,7 @@ export class ConnectorServiceRuntime {
     const allowedTerminalCommands = (process.env.CONNECTOR_TERMINAL_COMMANDS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
     this.core = new ConnectorCore({ allowedRoots, permissions, allowedTerminalCommands });
     this.client = new ConnectorClient({ serverUrl: process.env.CONNECTOR_SERVER_URL ?? "ws://127.0.0.1:4100/connect", pairingCode, core: this.core });
-    this.ipc = new IpcServer({ core: this.core, getStatus: () => ({ ready: Boolean(this.startedAt), startedAt: this.startedAt, connected: this.client.isConnected(), capabilities: this.core.getCapabilities(), permissions: this.core.getPermissions(), metrics: this.metrics.snapshot() }) });
+    this.ipc = new IpcServer({ core: this.core, getStatus: () => ({ connectorId: this.client.getConnectorId(), ready: Boolean(this.startedAt), startedAt: this.startedAt, connected: this.client.isConnected(), capabilities: this.core.getCapabilities(), permissions: this.core.getPermissions(), metrics: this.metrics.snapshot(), diagnostics: { platform: process.platform, arch: process.arch, nodeVersion: process.version, transport: process.platform === "win32" ? "tcp" : "unix" } }) });
   }
 
   async start(): Promise<void> {
