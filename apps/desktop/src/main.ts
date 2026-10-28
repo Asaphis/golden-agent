@@ -14,6 +14,24 @@ function badge(value: string, tone: "green" | "amber" | "slate" = "slate"): stri
 
 function render(): void {
   const connected = Boolean(status?.connected);
+  if (!connected) {
+    root.innerHTML = `
+      <div class="setup-shell">
+        <div class="setup-card">
+          <div class="brand setup-brand"><div class="brand-mark">G</div><div><strong>Golden Agent</strong><small>Desktop connector</small></div></div>
+          <div class="setup-icon">⌁</div>
+          <p class="eyebrow">FIRST-TIME SETUP</p>
+          <h1>Connect this computer</h1>
+          <p class="muted setup-copy">Pair this desktop with Golden Agent using the one-time code shown by the connector service. Your dashboard will appear after the connection is verified.</p>
+          ${message ? `<div class="notice">${escapeHtml(message)}</div>` : ""}
+          <form id="pair-form" class="setup-form"><label for="pairing-code">Pairing code</label><input id="pairing-code" placeholder="GLA-XXXX-XXXX" autocomplete="off" autofocus><button class="primary" type="submit">Pair device</button></form>
+          <div class="setup-help"><strong>Running headless?</strong><span>Start the connector from SSH or Termux, then enter its pairing code here.</span></div>
+          <p class="setup-foot">The connector remains local and permission-controlled.</p>
+        </div>
+      </div>`;
+    wireEvents();
+    return;
+  }
   root.innerHTML = `
     <div class="shell">
       <aside class="sidebar">
