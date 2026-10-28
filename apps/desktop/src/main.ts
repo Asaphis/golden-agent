@@ -57,4 +57,5 @@ function wireEvents(): void {
   document.querySelectorAll<HTMLButtonElement>(".nav-item").forEach((button) => button.addEventListener("click", () => { message = `${button.textContent} view is ready for the next desktop milestone.`; render(); }));
 }
 
+render();
 void load();
