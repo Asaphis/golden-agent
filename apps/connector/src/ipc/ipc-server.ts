@@ -5,18 +5,20 @@ import { randomUUID } from "node:crypto";
 import type { ConnectorCore } from "../core/connector-core.js";
 import { loadOrCreateIpcSecret } from "./ipc-auth.js";
 
-export interface IpcServerOptions { socketPath?: string; host?: string; port?: number; core: ConnectorCore; getStatus: () => Record<string, unknown>; }
+export interface IpcServerOptions { socketPath?: string; host?: string; port?: number; transport?: "auto" | "unix" | "tcp"; core: ConnectorCore; getStatus: () => Record<string, unknown>; }
 
 export class IpcServer {
   private readonly socketPath: string;
   private readonly host: string;
   private readonly port: number;
+  private readonly useTcp: boolean;
   private server?: Server;
   private readonly secret = loadOrCreateIpcSecret();
   private readonly usedNonces = new Set<string>();
 
   constructor(private readonly options: IpcServerOptions) {
-    this.socketPath = process.platform === "win32" ? "" : resolve(options.socketPath ?? "./.data/connector/connector.sock");
+    this.useTcp = options.transport === "tcp" || (options.transport !== "unix" && process.platform === "win32");
+    this.socketPath = this.useTcp ? "" : resolve(options.socketPath ?? "./.data/connector/connector.sock");
     this.host = options.host ?? process.env.CONNECTOR_IPC_HOST ?? "127.0.0.1";
     this.port = options.port ?? Number(process.env.CONNECTOR_IPC_PORT ?? 4101);
   }

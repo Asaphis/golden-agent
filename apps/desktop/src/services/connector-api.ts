@@ -9,6 +9,7 @@ export type ConnectorStatus = {
 export type ConnectorBridge = {
   getStatus(): Promise<ConnectorStatus>;
   getCapabilities(): Promise<string[]>;
+  execute(operation: string, input?: Record<string, unknown>): Promise<Record<string, unknown>>;
   pair(pairingCode: string): Promise<{ ok: boolean; message?: string }>;
   revoke(): Promise<{ ok: boolean; message?: string }>;
 };
@@ -34,6 +35,7 @@ const developmentStatus: ConnectorStatus = {
 export const connectorApi: ConnectorBridge = {
   async getStatus() { return runningInTauri() ? await invoke<ConnectorStatus>("connector_status") : nativeBridge()?.getStatus?.() ?? developmentStatus; },
   async getCapabilities() { return runningInTauri() ? await invoke<string[]>("connector_capabilities") : nativeBridge()?.getCapabilities?.() ?? developmentStatus.capabilities; },
+  async execute(operation, input = {}) { return runningInTauri() ? await invoke<Record<string, unknown>>("connector_execute", { operation, input }) : { ok: true, operation, input }; },
   async pair(pairingCode) {
     if (!pairingCode.trim()) return { ok: false, message: "Enter the pairing code from the connector." };
     if (runningInTauri()) return await invoke<{ ok: boolean; message?: string }>("connector_pair", { pairingCode });

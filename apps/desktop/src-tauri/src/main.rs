@@ -77,6 +77,15 @@ fn connector_capabilities() -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
+fn connector_execute(operation: String, input: Value) -> Result<Value, String> {
+    let response = ipc_request(json!({ "action": "execute", "operation": operation, "input": input }))?;
+    if response.get("ok").and_then(Value::as_bool) == Some(false) {
+        return Err(response.get("error").and_then(Value::as_str).unwrap_or("Connector operation failed").to_string());
+    }
+    response.get("result").cloned().ok_or_else(|| response.to_string())
+}
+
+#[tauri::command]
 fn connector_pair(pairing_code: String) -> Result<Value, String> {
     if pairing_code.trim().is_empty() { return Err("Pairing code is required".to_string()); }
     let project_path = env::var("GOLDEN_AGENT_PROJECT_PATH").unwrap_or_else(|_| ".".to_string());
@@ -93,7 +102,7 @@ fn connector_revoke() -> Result<Value, String> {
 
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![connector_status, connector_capabilities, connector_pair, connector_revoke])
+        .invoke_handler(tauri::generate_handler![connector_status, connector_capabilities, connector_execute, connector_pair, connector_revoke])
         .run(tauri::generate_context!())
         .expect("error while running Golden Agent Desktop");
 }

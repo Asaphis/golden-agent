@@ -12,7 +12,7 @@
     "start:connector": "node dist/apps/connector/src/main.js service",
     "validate:packaging": "bash scripts/release/validate-packaging.sh",
     "release:check": "bash scripts/release/release-check.sh",
-    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts"
+    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts && tsx tests/integration/ipc-tcp-flow.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
