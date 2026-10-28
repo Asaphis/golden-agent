@@ -37,7 +37,18 @@ function render(): void {
 }
 
 function formatUptime(seconds: number): string { if (!seconds) return "—"; const minutes = Math.floor(seconds / 60); return minutes ? `${minutes}m ${seconds % 60}s` : `${seconds}s`; }
-async function load(): Promise<void> { status = await connectorApi.getStatus(); capabilities = await connectorApi.getCapabilities(); render(); }
+async function load(): Promise<void> {
+  try {
+    status = await connectorApi.getStatus();
+    capabilities = await connectorApi.getCapabilities();
+    message = "";
+  } catch (error) {
+    status = { ready: false, connected: false, capabilities: [], metrics: { uptimeSeconds: 0 } };
+    capabilities = [];
+    message = `Connector is offline. Start or pair the connector service to enable local access.${error instanceof Error ? ` (${error.message})` : ""}`;
+  }
+  render();
+}
 function wireEvents(): void {
   document.querySelector("#refresh")?.addEventListener("click", () => void load());
   document.querySelector("#view-capabilities")?.addEventListener("click", () => { message = `${capabilities.length} capabilities available through the connector.`; render(); });
