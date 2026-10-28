@@ -15,7 +15,11 @@ async function main(): Promise<void> {
   try {
     const pairingResponse = await fetch(`${httpUrl}/v1/connectors/pairing`, { method: "POST" });
     assert.equal(pairingResponse.status, 201);
-    const pairing = await pairingResponse.json() as { pairingCode: string };
+    const pairing = await pairingResponse.json() as { pairingId: string; pairingCode: string; expiresAt: string; qrPayload: string };
+    assert.match(pairing.pairingId, /^[0-9a-f-]{36}$/);
+    assert.match(pairing.pairingCode, /^GLA-[0-9A-F]{4}-[0-9A-F]{4}$/);
+    assert.ok(new Date(pairing.expiresAt).getTime() > Date.now());
+    assert.equal(pairing.qrPayload, `golden-agent://pair?code=${encodeURIComponent(pairing.pairingCode)}&expiresAt=${encodeURIComponent(pairing.expiresAt)}`);
     const connector = new ConnectorClient({ serverUrl, pairingCode: pairing.pairingCode });
     await connector.start();
     await new Promise((resolve) => setTimeout(resolve, 100));

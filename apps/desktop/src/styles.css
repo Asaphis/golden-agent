@@ -29,3 +29,8 @@ nav { display: grid; gap: 5px; }.nav-item { border: 0; border-radius: 9px; paddi
 .setup-help { display: grid; gap: 4px; margin-top: 28px; padding: 13px; border: 1px solid #202d43; border-radius: 8px; color: #8997ad; font-size: 11px; line-height: 1.5; }
 .setup-help strong { color: #b7caf1; }
 .setup-foot { margin: 25px 0 0; color: #506079; font-size: 11px; }
+.secondary { border: 1px solid #32496f; border-radius: 7px; padding: 11px 13px; color: #b7caf1; background: #121e32; font-size: 12px; font-weight: 700; }
+.setup-generate { width: 100%; margin: 4px 0 18px; }
+.pairing-session { display: flex; align-items: center; gap: 22px; margin: 4px 0 23px; padding: 14px; border: 1px solid #293853; border-radius: 12px; background: #0b111d; }
+.pairing-session canvas { width: 220px; height: 220px; border-radius: 5px; background: #fff; }
+.pairing-details { display: grid; gap: 8px; }.pairing-details strong { color: #eef4ff; font-size: 22px; letter-spacing: .08em; }.pairing-details .muted { font-size: 11px; }

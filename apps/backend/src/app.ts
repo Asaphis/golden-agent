@@ -12,7 +12,12 @@ export interface BackendApp {
 }
 
 function json(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, { "content-type": "application/json" });
+  response.writeHead(status, {
+    "content-type": "application/json",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET,POST,OPTIONS",
+    "access-control-allow-headers": "content-type",
+  });
   response.end(JSON.stringify(body));
 }
 
@@ -35,6 +40,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   const rateWindows = new Map<string, { startedAt: number; count: number }>();
   const server = createServer(async (request, response) => {
     try {
+      if (request.method === "OPTIONS") return json(response, 204, {});
       const key = request.socket.remoteAddress ?? "unknown";
       const now = Date.now();
       const window = rateWindows.get(key);

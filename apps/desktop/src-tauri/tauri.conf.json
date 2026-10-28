@@ -11,7 +11,7 @@
   },
   "app": {
     "windows": [{ "label": "main", "title": "Golden Agent Desktop", "width": 1180, "height": 820, "minWidth": 960, "minHeight": 680, "resizable": true }],
-    "security": { "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://ipc.localhost" }
+    "security": { "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost ws://ipc.localhost http://127.0.0.1:4100" }
   },
   "bundle": {
     "active": true,

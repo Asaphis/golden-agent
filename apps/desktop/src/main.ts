@@ -1,5 +1,6 @@
 import "./styles.css";
-import { connectorApi, type ConnectorStatus } from "./services/connector-api.js";
+import QRCode from "qrcode";
+import { connectorApi, type ConnectorStatus, type PairingSession } from "./services/connector-api.js";
 
 const app = document.querySelector<HTMLDivElement>("#app");
 if (!app) throw new Error("Desktop app root is missing");
@@ -8,6 +9,7 @@ const root = app;
 let status: ConnectorStatus | null = null;
 let capabilities: string[] = [];
 let message = "";
+let pairingSession: PairingSession | null = null;
 
 function escapeHtml(value: string): string { return value.replace(/[&<>\"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character] ?? character); }
 function badge(value: string, tone: "green" | "amber" | "slate" = "slate"): string { return `<span class="badge ${tone}">${escapeHtml(value)}</span>`; }
@@ -24,12 +26,17 @@ function render(): void {
           <h1>Connect this computer</h1>
           <p class="muted setup-copy">Pair this desktop with Golden Agent using the one-time code shown by the connector service. Your dashboard will appear after the connection is verified.</p>
           ${message ? `<div class="notice">${escapeHtml(message)}</div>` : ""}
+          ${pairingSession ? `<div class="pairing-session"><canvas id="pairing-qr" width="220" height="220"></canvas><div class="pairing-details"><span class="eyebrow">PAIRING CODE</span><strong>${escapeHtml(pairingSession.pairingCode)}</strong><span class="muted">Expires ${new Date(pairingSession.expiresAt).toLocaleTimeString()}</span></div></div>` : `<button class="secondary setup-generate" id="generate-pairing" type="button">Generate QR pairing code</button>`}
           <form id="pair-form" class="setup-form"><label for="pairing-code">Pairing code</label><input id="pairing-code" placeholder="GLA-XXXX-XXXX" autocomplete="off" autofocus><button class="primary" type="submit">Pair device</button></form>
           <div class="setup-help"><strong>Running headless?</strong><span>Start the connector from SSH or Termux, then enter its pairing code here.</span></div>
           <p class="setup-foot">The connector remains local and permission-controlled.</p>
         </div>
       </div>`;
     wireEvents();
+    if (pairingSession) {
+      const canvas = document.querySelector<HTMLCanvasElement>("#pairing-qr");
+      if (canvas) void QRCode.toCanvas(canvas, pairingSession.qrPayload, { width: 220, margin: 2 });
+    }
     return;
   }
   root.innerHTML = `
@@ -68,6 +75,13 @@ async function load(): Promise<void> {
   render();
 }
 function wireEvents(): void {
+  document.querySelector("#generate-pairing")?.addEventListener("click", async () => {
+    message = "Creating a secure pairing session…";
+    render();
+    try { pairingSession = await connectorApi.createPairingSession(); message = "Scan the QR code or enter the pairing code on the connector."; }
+    catch (error) { pairingSession = null; message = error instanceof Error ? error.message : "Unable to create a pairing session."; }
+    render();
+  });
   document.querySelector("#refresh")?.addEventListener("click", () => void load());
   document.querySelector("#view-capabilities")?.addEventListener("click", () => { message = `${capabilities.length} capabilities available through the connector.`; render(); });
   document.querySelector("#revoke")?.addEventListener("click", async () => { const result = await connectorApi.revoke(); message = result.message ?? (result.ok ? "Connector revoked." : "Unable to revoke connector."); await load(); });

@@ -10,13 +10,14 @@ export class ConnectorService {
 
   constructor(private readonly database: Database) {}
 
-  createPairing(): { pairingId: string; pairingCode: string; expiresAt: string } {
+  createPairing(): { pairingId: string; pairingCode: string; expiresAt: string; qrPayload: string } {
     const pairingId = randomUUID();
     const pairingCode = `GLA-${randomBytes(2).toString("hex").toUpperCase()}-${randomBytes(2).toString("hex").toUpperCase()}`;
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
     this.database.createPairing(pairingId, pairingCode, expiresAt);
     this.database.addAudit("pairing.created", null, { pairingId, expiresAt });
-    return { pairingId, pairingCode, expiresAt };
+    const qrPayload = `golden-agent://pair?code=${encodeURIComponent(pairingCode)}&expiresAt=${encodeURIComponent(expiresAt)}`;
+    return { pairingId, pairingCode, expiresAt, qrPayload };
   }
 
   pair(request: PairingRequest, _socket: WebSocket): PairingAccepted | null {
