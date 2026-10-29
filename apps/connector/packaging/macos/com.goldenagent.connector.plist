@@ -5,9 +5,17 @@
   <key>Label</key><string>com.goldenagent.connector</string>
   <key>WorkingDirectory</key><string>__PROJECT_PATH__</string>
   <key>ProgramArguments</key>
-  <array><string>/usr/local/bin/node</string><string>__PROJECT_PATH__/dist/apps/connector/src/main.js</string><string>service</string></array>
+  <array><string>__NODE_PATH__</string><string>__PROJECT_PATH__/dist/apps/connector/src/main.js</string><string>service</string></array>
   <key>EnvironmentVariables</key>
-  <dict><key>CONNECTOR_SERVER_URL</key><string>ws://127.0.0.1:4100/connect</string><key>CONNECTOR_ALLOWED_ROOTS</key><string>__PROJECT_PATH__</string><key>CONNECTOR_PERMISSIONS</key><string>connector.health,model.discovery</string></dict>
+  <dict>
+    <key>CONNECTOR_SERVER_URL</key><string>ws://127.0.0.1:4100/connect</string>
+    <key>CONNECTOR_DATA_PATH</key><string>__DATA_PATH__</string>
+    <key>CONNECTOR_IDENTITY_PATH</key><string>__DATA_PATH__/identity.json</string>
+    <key>CONNECTOR_TOKEN_PATH</key><string>__DATA_PATH__/access-token</string>
+    <key>CONNECTOR_IPC_SECRET_PATH</key><string>__DATA_PATH__/ipc-secret</string>
+    <key>CONNECTOR_ALLOWED_ROOTS</key><string>__PROJECT_PATH__</string>
+    <key>CONNECTOR_PERMISSIONS</key><string>connector.health,model.discovery</string>
+  </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>

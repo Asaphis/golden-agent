@@ -4,12 +4,20 @@ set -euo pipefail
 PROJECT_PATH="${GOLDEN_AGENT_PROJECT_PATH:-$HOME/golden-agent}"
 SERVICE_DIR="$HOME/.config/systemd/user"
 CONFIG_DIR="$HOME/.config/golden-agent"
+DATA_PATH="$HOME/.data/connector"
+NODE_PATH="$(command -v node)"
 mkdir -p "$SERVICE_DIR" "$CONFIG_DIR"
 
 cd "$PROJECT_PATH"
 pnpm install --frozen-lockfile
 pnpm build
-cp "$PROJECT_PATH/apps/connector/packaging/systemd/golden-agent-connector.service" "$SERVICE_DIR/golden-agent-connector.service"
+sed \
+  -e "s#__PROJECT_PATH__#$PROJECT_PATH#g" \
+  -e "s#__NODE_PATH__#$NODE_PATH#g" \
+  -e "s#__CONFIG_DIR__#$CONFIG_DIR#g" \
+  -e "s#__DATA_PATH__#$DATA_PATH#g" \
+  "$PROJECT_PATH/apps/connector/packaging/systemd/golden-agent-connector.service" \
+  > "$SERVICE_DIR/golden-agent-connector.service"
 
 if [[ ! -f "$CONFIG_DIR/connector.env" ]]; then
   cat > "$CONFIG_DIR/connector.env" <<EOF
