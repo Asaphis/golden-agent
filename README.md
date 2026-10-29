@@ -2,6 +2,8 @@
 
 Initial implementation: a real backend, connector core, background service, and headless connector vertical slice.
 
+The Connector is the independently deployable local service. It supports authenticated Unix-socket IPC on Linux and macOS, loopback TCP IPC on Windows, a headless CLI for SSH and Termux, and a Tauri desktop manager.
+
 ## Requirements
 
 - Node.js 22+
@@ -56,5 +58,17 @@ pnpm exec tsx tests/integration/connector-service-flow.ts
 ```
 
 The tests start the backend in-process, pair a connector, authenticate it, verify online heartbeat, exercise the permission-checked health operation, and verify the background service's local IPC and core operation path.
+
+## Release and upgrades
+
+Platform installation, upgrade, rollback, security, and release-owner validation are documented in [the Connector release guide](docs/connector/release.md). Headless installation examples are in [the platform guide](docs/connector/headless-platforms.md).
+
+Create a reproducible source artifact from a tagged checkout with:
+
+```bash
+pnpm release:source --version 0.1.0 --output dist/release
+```
+
+Review [SECURITY.md](SECURITY.md) before exposing a Connector to a real backend or granting filesystem and terminal permissions.
 
 This is the first complete runtime foundation, not the complete Golden Agent product. It establishes the real protocol, persistence, pairing, authorization, audit, connection, connector core, background service, local IPC, capability reporting, and test foundations on which model and tool capabilities will be added.
