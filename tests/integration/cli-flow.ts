@@ -26,12 +26,41 @@ async function main(): Promise<void> {
     const diagnostics = await execFileAsync(process.execPath, ["dist/apps/connector/src/main.js", "doctor", "--json"], { env });
     const diagnosticPayload = JSON.parse(diagnostics.stdout) as { diagnostics: { connected: boolean } };
     assert.equal(diagnosticPayload.diagnostics.connected, true);
-    console.log("CLI flow passed: authenticated status and diagnostics JSON output verified.");
+    const permissions = await execFileAsync(process.execPath, ["dist/apps/connector/src/main.js", "permissions", "set", "--json", "--permissions", "connector.health,filesystem.read"], { env });
+    assert.deepEqual(JSON.parse(permissions.stdout).permissions, ["connector.health", "filesystem.read"]);
+
+    const invalidPermission = await expectFailure(["permissions", "set", "--json", "--permissions", "not-a-permission"], env);
+    assert.equal(JSON.parse(invalidPermission).error, "INVALID_PERMISSION");
+    const invalidCommand = await expectFailure(["not-a-command", "--json"], env);
+    assert.match(JSON.parse(invalidCommand).error, /Unknown command/);
+    const wrongSecret = await expectFailure(["status", "--json"], { ...env, CONNECTOR_IPC_SECRET_PATH: join(directory, "wrong-secret") });
+    assert.equal(JSON.parse(wrongSecret).error, "IPC_AUTHENTICATION_FAILED");
+    await server.stop();
+    const serviceEnv = { ...env, CONNECTOR_PID_PATH: join(directory, "connector.pid"), CONNECTOR_DATA_PATH: join(directory, "service-data"), CONNECTOR_SERVER_URL: "ws://127.0.0.1:9/connect" };
+    const serviceStart = await execFileAsync(process.execPath, ["dist/apps/connector/src/main.js", "service", "start", "--json"], { env: serviceEnv });
+    assert.equal(JSON.parse(serviceStart.stdout).ok, true);
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    const serviceStatus = await execFileAsync(process.execPath, ["dist/apps/connector/src/main.js", "service", "status", "--json"], { env: serviceEnv });
+    assert.equal(typeof JSON.parse(serviceStatus.stdout).running, "boolean");
+    await execFileAsync(process.execPath, ["dist/apps/connector/src/main.js", "service", "stop", "--json"], { env: serviceEnv });
+    const stoppedStatus = await execFileAsync(process.execPath, ["dist/apps/connector/src/main.js", "service", "status", "--json"], { env: serviceEnv });
+    assert.equal(JSON.parse(stoppedStatus.stdout).running, false);
+    console.log("CLI flow passed: JSON output, permissions, invalid input, authentication failure, diagnostics, and service lifecycle verified.");
   } finally {
     await server.stop();
     await core.dispose();
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+async function expectFailure(args: string[], env: NodeJS.ProcessEnv): Promise<string> {
+  try {
+    await execFileAsync(process.execPath, ["dist/apps/connector/src/main.js", ...args], { env });
+  } catch (error) {
+    const result = error as { stdout?: string; stderr?: string };
+    return result.stdout ?? result.stderr ?? "";
+  }
+  throw new Error(`Expected CLI command to fail: ${args.join(" ")}`);
 }
 
 main().then(() => process.exit(0)).catch((error) => { console.error(error); process.exit(1); });
