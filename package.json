@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@11.25.0",
+  "bin": {
+    "golden-agent-connector": "dist/apps/connector/src/main.js"
+  },
   "scripts": {
     "dev:backend": "tsx apps/backend/src/main.ts",
     "dev:connector": "tsx apps/connector/src/main.ts",
@@ -10,9 +13,10 @@
     "build:connector": "tsc -b",
     "build:desktop": "pnpm --filter @golden-agent/desktop build",
     "start:connector": "node dist/apps/connector/src/main.js service",
+    "connector": "tsx apps/connector/src/main.ts",
     "validate:packaging": "bash scripts/release/validate-packaging.sh",
     "release:check": "bash scripts/release/release-check.sh",
-    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts && tsx tests/integration/ipc-tcp-flow.ts"
+    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts && tsx tests/integration/ipc-tcp-flow.ts && tsx tests/integration/cli-flow.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
