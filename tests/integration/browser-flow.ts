@@ -1,8 +1,12 @@
 import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
-import { ConnectorCore } from "../../apps/connector/src/core/connector-core.js";
 
 async function main(): Promise<void> {
+  if (process.platform === "android") {
+    console.log("Browser flow skipped: Playwright browser automation is unavailable on Android/Termux.");
+    return;
+  }
+  const { ConnectorCore } = await import("../../apps/connector/src/core/connector-core.js");
   const server = createServer((_request, response) => {
     response.setHeader("content-type", "text/html");
     response.end('<html><head><title>Test page</title></head><body><h1>Hello browser</h1><input id="name"><button id="go" onclick="document.querySelector(\'h1\').textContent=\'Clicked\'">Go</button><a href="/next">Next</a></body></html>');

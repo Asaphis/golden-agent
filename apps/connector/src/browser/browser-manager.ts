@@ -16,6 +16,7 @@ export class BrowserManager {
   private readonly sessions = new Map<string, BrowserSession>();
 
   async open(): Promise<{ sessionId: string }> {
+    if (process.platform === "android") throw new Error("Browser automation is unavailable on Android/Termux");
     this.browser ??= await chromium.launch({ headless: true });
     const context = await this.browser.newContext();
     const page = await context.newPage();

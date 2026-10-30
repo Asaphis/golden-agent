@@ -35,11 +35,13 @@ export class ConnectorCore {
   }
 
   getCapabilities(): string[] {
-    return [
+    const capabilities = [
       "connector.health", "system.info", "models.discover", "models.execute", "models.stream",
       "filesystem.list", "filesystem.read", "filesystem.write", "git.status",
       "process.list", "process.start", "process.stop", "terminal.execute", "testing.run", "building.run", "artifact.collect", "browser.open", "browser.navigate", "browser.inspect", "browser.screenshot", "browser.click", "browser.type", "browser.close",
     ];
+    if (process.platform === "android") return capabilities.filter((capability) => !capability.startsWith("browser."));
+    return capabilities;
   }
 
   async dispose(): Promise<void> {
