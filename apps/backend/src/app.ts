@@ -4,6 +4,7 @@ import { Database } from "./database/database.js";
 import { ConnectorService } from "./modules/connectors/connector.service.js";
 import { ConversationService } from "./modules/conversations/conversation.service.js";
 import { ModelRegistryService } from "./modules/models/model-registry.service.js";
+import { TaskOrchestrator } from "./modules/tasks/task-orchestrator.service.js";
 import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission, TaskProgressMessage, PermissionsAcknowledgedMessage } from "../../../packages/protocol/src/index.js";
 
 export interface BackendApp {
@@ -12,6 +13,7 @@ export interface BackendApp {
   connectors: ConnectorService;
   conversations: ConversationService;
   models: ModelRegistryService;
+  orchestrator: TaskOrchestrator;
   close(): Promise<void>;
 }
 
@@ -43,6 +45,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   const models = new ModelRegistryService(database);
   const activeSockets = new Map<string, WebSocket>();
   const sockets = new Set<WebSocket>();
+  const orchestrator = new TaskOrchestrator(database, connectors, (connectorId) => activeSockets.get(connectorId));
   const rateWindows = new Map<string, { startedAt: number; count: number }>();
   const server = createServer(async (request, response) => {
     try {
@@ -86,6 +89,23 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       if (request.method === "POST" && request.url === "/v1/models") {
         const body = await requestBody(request);
         return json(response, 201, { ok: true, model: models.registerModel({ providerId: String(body.providerId ?? ""), externalId: String(body.externalId ?? ""), displayName: typeof body.displayName === "string" ? body.displayName : undefined, capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : undefined }) });
+      }
+      if (request.method === "GET" && request.url?.startsWith("/v1/permission-requests")) {
+        const url = new URL(request.url, "http://localhost");
+        const status = url.searchParams.get("status");
+        return json(response, 200, { ok: true, requests: orchestrator.listPermissionRequests(status === "pending" || status === "approved" || status === "denied" ? status : undefined) });
+      }
+      const permissionResolveMatch = request.url?.match(/^\/v1\/permission-requests\/([^/]+)\/resolve$/);
+      if (request.method === "POST" && permissionResolveMatch) {
+        const body = await requestBody(request);
+        const approved = body.approved === true;
+        return json(response, 200, { ok: true, request: orchestrator.resolvePermission(permissionResolveMatch[1], approved, typeof body.resolvedBy === "string" ? body.resolvedBy : "workspace") });
+      }
+      if (request.method === "POST" && request.url === "/v1/tasks") {
+        const body = await requestBody(request);
+        if (typeof body.connectorId !== "string" || typeof body.operation !== "string") return json(response, 400, { ok: false, error: "CONNECTOR_AND_OPERATION_REQUIRED" });
+        const result = orchestrator.createOrDispatch({ connectorId: body.connectorId, operation: body.operation as Parameters<ConnectorService["createTask"]>[1], taskInput: (body.input ?? {}) as Record<string, unknown>, timeoutMs: Number(body.timeoutMs ?? 30_000) });
+        return result.permissionRequest ? json(response, 202, { ok: true, status: "permission_required", permissionRequest: result.permissionRequest }) : json(response, 202, { ok: true, status: "dispatched", task: result.task });
       }
       if (request.method === "POST" && request.url === "/v1/connectors/pairing") return json(response, 201, connectors.createPairing());
       const revokeMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/revoke$/);
@@ -234,6 +254,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     connectors,
     conversations,
     models,
+    orchestrator,
     close: async () => new Promise((resolve) => {
       let settled = false;
       const finish = () => { if (settled) return; settled = true; database.close(); resolve(); };

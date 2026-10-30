@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { randomUUID } from "node:crypto";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,14 @@ async function main(): Promise<void> {
     const provider = await (await fetch(`${base}/v1/providers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Local Ollama", type: "ollama" }) })).json() as { provider: { providerId: string } };
     const model = await (await fetch(`${base}/v1/models`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ providerId: provider.provider.providerId, externalId: "llama3.2", capabilities: ["text", "streaming"] }) })).json() as { model: { externalId: string } };
     assert.equal(model.model.externalId, "llama3.2");
+    const connectorId = randomUUID();
+    app.database.createConnector({ connectorId, deviceId: randomUUID(), deviceName: "Workspace test connector", platform: "linux", status: "online", accessToken: null, tokenExpiresAt: null, permissions: ["connector.health"], lastSeenAt: new Date().toISOString() });
+    const taskRequest = await (await fetch(`${base}/v1/tasks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectorId, operation: "terminal.execute", input: { command: "pwd" } }) })).json() as { status: string; permissionRequest: { requestId: string; permission: string } };
+    assert.equal(taskRequest.status, "permission_required");
+    assert.equal(taskRequest.permissionRequest.permission, "terminal.execute");
+    const resolved = await (await fetch(`${base}/v1/permission-requests/${taskRequest.permissionRequest.requestId}/resolve`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approved: true, resolvedBy: "integration-test" }) })).json() as { request: { status: string } };
+    assert.equal(resolved.request.status, "approved");
+    assert.ok(app.database.getConnector(connectorId)?.permissions.includes("terminal.execute"));
     console.log("Workspace backend flow passed: conversations, messages, providers, models, and persistence APIs verified.");
   } finally {
     await app.close();

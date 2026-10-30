@@ -69,6 +69,18 @@ export interface ModelRecord {
   createdAt: string;
 }
 
+export interface PermissionRequestRecord {
+  requestId: string;
+  taskId: string | null;
+  connectorId: string | null;
+  permission: string;
+  scope: string;
+  status: "pending" | "approved" | "denied";
+  createdAt: string;
+  resolvedAt: string | null;
+  resolvedBy: string | null;
+}
+
 export class Database {
   readonly db: DatabaseSync;
 
@@ -329,6 +341,24 @@ export class Database {
   listModels(): ModelRecord[] {
     const rows = this.db.prepare("SELECT * FROM models ORDER BY display_name ASC").all() as Array<Record<string, unknown>>;
     return rows.map((row) => ({ modelId: String(row.model_id), providerId: String(row.provider_id), externalId: String(row.external_id), displayName: String(row.display_name), capabilities: JSON.parse(String(row.capabilities_json)) as string[], enabled: Boolean(row.enabled), createdAt: String(row.created_at) }));
+  }
+
+  createPermissionRequest(record: PermissionRequestRecord): void {
+    this.db.prepare("INSERT INTO permission_requests (request_id, task_id, connector_id, permission, scope, status, created_at, resolved_at, resolved_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(record.requestId, record.taskId, record.connectorId, record.permission, record.scope, record.status, record.createdAt, record.resolvedAt, record.resolvedBy);
+  }
+
+  listPermissionRequests(status?: PermissionRequestRecord["status"]): PermissionRequestRecord[] {
+    const rows = (status ? this.db.prepare("SELECT * FROM permission_requests WHERE status = ? ORDER BY created_at DESC").all(status) : this.db.prepare("SELECT * FROM permission_requests ORDER BY created_at DESC").all()) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ requestId: String(row.request_id), taskId: row.task_id ? String(row.task_id) : null, connectorId: row.connector_id ? String(row.connector_id) : null, permission: String(row.permission), scope: String(row.scope), status: row.status as PermissionRequestRecord["status"], createdAt: String(row.created_at), resolvedAt: row.resolved_at ? String(row.resolved_at) : null, resolvedBy: row.resolved_by ? String(row.resolved_by) : null }));
+  }
+
+  getPermissionRequest(requestId: string): PermissionRequestRecord | null {
+    return this.listPermissionRequests().find((request) => request.requestId === requestId) ?? null;
+  }
+
+  resolvePermissionRequest(requestId: string, status: "approved" | "denied", resolvedBy: string): boolean {
+    const result = this.db.prepare("UPDATE permission_requests SET status = ?, resolved_at = ?, resolved_by = ? WHERE request_id = ? AND status = 'pending'").run(status, new Date().toISOString(), resolvedBy, requestId);
+    return Number(result.changes) > 0;
   }
 
   close(): void {
