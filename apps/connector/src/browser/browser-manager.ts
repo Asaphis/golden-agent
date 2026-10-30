@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import type { Browser, BrowserContext, Page } from "playwright";
 
 export interface BrowserPage {
   url: string;
@@ -17,6 +17,7 @@ export class BrowserManager {
 
   async open(): Promise<{ sessionId: string }> {
     if (process.platform === "android") throw new Error("Browser automation is unavailable on Android/Termux");
+    const { chromium } = await import("playwright");
     this.browser ??= await chromium.launch({ headless: true });
     const context = await this.browser.newContext();
     const page = await context.newPage();
