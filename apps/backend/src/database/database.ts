@@ -11,6 +11,7 @@ export interface ConnectorRecord {
   accessToken: string | null;
   tokenExpiresAt: string | null;
   permissions: string[];
+  capabilities?: string[];
   lastSeenAt: string | null;
 }
 
@@ -110,6 +111,7 @@ export class Database {
         status TEXT NOT NULL,
         access_token TEXT,
         permissions_json TEXT NOT NULL,
+        capabilities_json TEXT NOT NULL DEFAULT '[]',
         last_seen_at TEXT
       );
       CREATE TABLE IF NOT EXISTS audit_events (
@@ -200,6 +202,7 @@ export class Database {
     `);
     this.db.prepare("INSERT OR IGNORE INTO workspaces (workspace_id, name, created_at) VALUES (?, ?, ?)").run("default", "Default Workspace", new Date().toISOString());
     try { this.db.exec("ALTER TABLE connectors ADD COLUMN token_expires_at TEXT"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE connectors ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
   }
 
   createPairing(id: string, code: string, expiresAt: string): void {
@@ -222,8 +225,8 @@ export class Database {
   createConnector(record: ConnectorRecord): void {
     this.db.prepare(`
       INSERT INTO connectors
-      (connector_id, device_id, device_name, platform, status, access_token, permissions_json, last_seen_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      (connector_id, device_id, device_name, platform, status, access_token, permissions_json, capabilities_json, last_seen_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.connectorId,
       record.deviceId,
@@ -232,6 +235,7 @@ export class Database {
       record.status,
       record.accessToken,
       JSON.stringify(record.permissions),
+      JSON.stringify(record.capabilities ?? []),
       record.lastSeenAt,
     );
     this.db.prepare("UPDATE connectors SET token_expires_at = ? WHERE connector_id = ?").run(record.tokenExpiresAt, record.connectorId);
@@ -249,12 +253,18 @@ export class Database {
       accessToken: row.access_token ? String(row.access_token) : null,
       tokenExpiresAt: row.token_expires_at ? String(row.token_expires_at) : null,
       permissions: JSON.parse(String(row.permissions_json)) as string[],
+      capabilities: row.capabilities_json ? JSON.parse(String(row.capabilities_json)) as string[] : [],
       lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null,
     };
   }
 
-  updateHeartbeat(connectorId: string, timestamp: string): void {
-    this.db.prepare("UPDATE connectors SET status = 'online', last_seen_at = ? WHERE connector_id = ? AND status != 'revoked'").run(timestamp, connectorId);
+  listConnectors(): ConnectorRecord[] {
+    const rows = this.db.prepare("SELECT * FROM connectors ORDER BY device_name ASC").all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ connectorId: String(row.connector_id), deviceId: String(row.device_id), deviceName: String(row.device_name), platform: String(row.platform), status: row.status as ConnectorRecord["status"], accessToken: null, tokenExpiresAt: row.token_expires_at ? String(row.token_expires_at) : null, permissions: JSON.parse(String(row.permissions_json)) as string[], capabilities: row.capabilities_json ? JSON.parse(String(row.capabilities_json)) as string[] : [], lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null }));
+  }
+
+  updateHeartbeat(connectorId: string, timestamp: string, capabilities: string[] = []): void {
+    this.db.prepare("UPDATE connectors SET status = 'online', last_seen_at = ?, capabilities_json = ? WHERE connector_id = ? AND status != 'revoked'").run(timestamp, JSON.stringify(capabilities), connectorId);
   }
 
   updatePermissions(connectorId: string, permissions: string[]): boolean {

@@ -23,7 +23,9 @@ async function main(): Promise<void> {
     const model = await (await fetch(`${base}/v1/models`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ providerId: provider.provider.providerId, externalId: "llama3.2", capabilities: ["text", "streaming"] }) })).json() as { model: { externalId: string } };
     assert.equal(model.model.externalId, "llama3.2");
     const connectorId = randomUUID();
-    app.database.createConnector({ connectorId, deviceId: randomUUID(), deviceName: "Workspace test connector", platform: "linux", status: "online", accessToken: null, tokenExpiresAt: null, permissions: ["connector.health"], lastSeenAt: new Date().toISOString() });
+    app.database.createConnector({ connectorId, deviceId: randomUUID(), deviceName: "Workspace test connector", platform: "linux", status: "online", accessToken: null, tokenExpiresAt: null, permissions: ["connector.health"], capabilities: ["system.info", "terminal.execute"], lastSeenAt: new Date().toISOString() });
+    const devices = await (await fetch(`${base}/v1/connectors`)).json() as { connectors: Array<{ connectorId: string; capabilities: string[] }> };
+    assert.equal(devices.connectors.find((device) => device.connectorId === connectorId)?.capabilities[0], "system.info");
     const taskRequest = await (await fetch(`${base}/v1/tasks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ connectorId, operation: "terminal.execute", input: { command: "pwd" } }) })).json() as { status: string; permissionRequest: { requestId: string; permission: string } };
     assert.equal(taskRequest.status, "permission_required");
     assert.equal(taskRequest.permissionRequest.permission, "terminal.execute");

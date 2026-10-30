@@ -108,6 +108,11 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         return result.permissionRequest ? json(response, 202, { ok: true, status: "permission_required", permissionRequest: result.permissionRequest }) : json(response, 202, { ok: true, status: "dispatched", task: result.task });
       }
       if (request.method === "POST" && request.url === "/v1/connectors/pairing") return json(response, 201, connectors.createPairing());
+      if (request.method === "GET" && request.url?.startsWith("/v1/connectors")) {
+        const url = new URL(request.url, "http://localhost");
+        const connectorId = url.pathname.split("/")[3];
+        if (!connectorId) return json(response, 200, { ok: true, connectors: database.listConnectors() });
+      }
       const revokeMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/revoke$/);
       if (request.method === "POST" && revokeMatch) {
         const ok = connectors.revoke(revokeMatch[1]);

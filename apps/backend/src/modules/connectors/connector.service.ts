@@ -57,7 +57,7 @@ export class ConnectorService {
   }
 
   heartbeat(message: HeartbeatMessage): void {
-    this.database.updateHeartbeat(message.connectorId, message.timestamp);
+    this.database.updateHeartbeat(message.connectorId, message.timestamp, message.capabilities);
     this.database.addAudit("connector.heartbeat", message.connectorId, { capabilities: message.capabilities });
   }
 
