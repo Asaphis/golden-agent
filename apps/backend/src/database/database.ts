@@ -33,6 +33,42 @@ export interface TaskRecord {
   finishedAt: string | null;
 }
 
+export interface ConversationRecord {
+  conversationId: string;
+  workspaceId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MessageRecord {
+  messageId: string;
+  conversationId: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ProviderRecord {
+  providerId: string;
+  name: string;
+  type: string;
+  status: "active" | "disabled";
+  config: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface ModelRecord {
+  modelId: string;
+  providerId: string;
+  externalId: string;
+  displayName: string;
+  capabilities: string[];
+  enabled: boolean;
+  createdAt: string;
+}
+
 export class Database {
   readonly db: DatabaseSync;
 
@@ -88,7 +124,69 @@ export class Database {
         started_at TEXT,
         finished_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS workspaces (
+        workspace_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS conversations (
+        conversation_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        title TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id)
+      );
+      CREATE TABLE IF NOT EXISTS messages (
+        message_id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL,
+        metadata_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(conversation_id)
+      );
+      CREATE TABLE IF NOT EXISTS providers (
+        provider_id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        status TEXT NOT NULL,
+        config_json TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS models (
+        model_id TEXT PRIMARY KEY,
+        provider_id TEXT NOT NULL,
+        external_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        capabilities_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        UNIQUE(provider_id, external_id),
+        FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
+      );
+      CREATE TABLE IF NOT EXISTS permission_requests (
+        request_id TEXT PRIMARY KEY,
+        task_id TEXT,
+        connector_id TEXT,
+        permission TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT,
+        resolved_by TEXT
+      );
+      CREATE TABLE IF NOT EXISTS artifacts (
+        artifact_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        mime_type TEXT,
+        size INTEGER,
+        path TEXT,
+        created_at TEXT NOT NULL
+      );
     `);
+    this.db.prepare("INSERT OR IGNORE INTO workspaces (workspace_id, name, created_at) VALUES (?, ?, ?)").run("default", "Default Workspace", new Date().toISOString());
     try { this.db.exec("ALTER TABLE connectors ADD COLUMN token_expires_at TEXT"); } catch { /* already migrated */ }
   }
 
@@ -189,6 +287,48 @@ export class Database {
     if (!current) return;
     const next = { ...current, ...patch };
     this.db.prepare("UPDATE tasks SET status = ?, progress = ?, progress_message = ?, result_json = ?, error_json = ?, attempts = ?, artifacts_json = ?, started_at = ?, finished_at = ? WHERE task_id = ?").run(next.status, next.progress, next.progressMessage, next.result ? JSON.stringify(next.result) : null, next.error ? JSON.stringify(next.error) : null, next.attempts, JSON.stringify(next.artifactMetadata), next.startedAt, next.finishedAt, taskId);
+  }
+
+  createConversation(record: ConversationRecord): void {
+    this.db.prepare("INSERT INTO conversations (conversation_id, workspace_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").run(record.conversationId, record.workspaceId, record.title, record.createdAt, record.updatedAt);
+  }
+
+  listConversations(workspaceId = "default"): ConversationRecord[] {
+    const rows = this.db.prepare("SELECT * FROM conversations WHERE workspace_id = ? ORDER BY updated_at DESC").all(workspaceId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ conversationId: String(row.conversation_id), workspaceId: String(row.workspace_id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) }));
+  }
+
+  getConversation(conversationId: string): ConversationRecord | null {
+    const row = this.db.prepare("SELECT * FROM conversations WHERE conversation_id = ?").get(conversationId) as Record<string, unknown> | undefined;
+    return row ? { conversationId: String(row.conversation_id), workspaceId: String(row.workspace_id), title: String(row.title), createdAt: String(row.created_at), updatedAt: String(row.updated_at) } : null;
+  }
+
+  addMessage(record: MessageRecord): void {
+    this.db.prepare("INSERT INTO messages (message_id, conversation_id, role, content, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?)").run(record.messageId, record.conversationId, record.role, record.content, JSON.stringify(record.metadata), record.createdAt);
+    this.db.prepare("UPDATE conversations SET updated_at = ? WHERE conversation_id = ?").run(record.createdAt, record.conversationId);
+  }
+
+  listMessages(conversationId: string): MessageRecord[] {
+    const rows = this.db.prepare("SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC").all(conversationId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ messageId: String(row.message_id), conversationId: String(row.conversation_id), role: row.role as MessageRecord["role"], content: String(row.content), metadata: JSON.parse(String(row.metadata_json)) as Record<string, unknown>, createdAt: String(row.created_at) }));
+  }
+
+  upsertProvider(record: ProviderRecord): void {
+    this.db.prepare("INSERT INTO providers (provider_id, name, type, status, config_json, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(provider_id) DO UPDATE SET name = excluded.name, type = excluded.type, status = excluded.status, config_json = excluded.config_json").run(record.providerId, record.name, record.type, record.status, JSON.stringify(record.config), record.createdAt);
+  }
+
+  listProviders(): ProviderRecord[] {
+    const rows = this.db.prepare("SELECT * FROM providers ORDER BY name ASC").all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ providerId: String(row.provider_id), name: String(row.name), type: String(row.type), status: row.status as ProviderRecord["status"], config: JSON.parse(String(row.config_json)) as Record<string, unknown>, createdAt: String(row.created_at) }));
+  }
+
+  upsertModel(record: ModelRecord): void {
+    this.db.prepare("INSERT INTO models (model_id, provider_id, external_id, display_name, capabilities_json, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(model_id) DO UPDATE SET display_name = excluded.display_name, capabilities_json = excluded.capabilities_json, enabled = excluded.enabled").run(record.modelId, record.providerId, record.externalId, record.displayName, JSON.stringify(record.capabilities), record.enabled ? 1 : 0, record.createdAt);
+  }
+
+  listModels(): ModelRecord[] {
+    const rows = this.db.prepare("SELECT * FROM models ORDER BY display_name ASC").all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ modelId: String(row.model_id), providerId: String(row.provider_id), externalId: String(row.external_id), displayName: String(row.display_name), capabilities: JSON.parse(String(row.capabilities_json)) as string[], enabled: Boolean(row.enabled), createdAt: String(row.created_at) }));
   }
 
   close(): void {

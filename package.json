@@ -17,7 +17,7 @@
     "validate:packaging": "bash scripts/release/validate-packaging.sh",
     "release:source": "bash scripts/release/create-source-release.sh",
     "release:check": "bash scripts/release/release-check.sh",
-    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts && tsx tests/integration/ipc-tcp-flow.ts && tsx tests/integration/cli-flow.ts"
+    "test:connector": "tsx tests/integration/connector-flow.ts && tsx tests/integration/connector-service-flow.ts && tsx tests/integration/connector-core-flow.ts && tsx tests/integration/task-lifecycle-flow.ts && tsx tests/integration/security-flow.ts && tsx tests/integration/model-flow.ts && tsx tests/integration/browser-flow.ts && tsx tests/integration/ipc-tcp-flow.ts && tsx tests/integration/cli-flow.ts && tsx tests/integration/workspace-backend-flow.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

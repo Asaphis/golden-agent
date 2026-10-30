@@ -2,12 +2,16 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { WebSocketServer, type WebSocket } from "ws";
 import { Database } from "./database/database.js";
 import { ConnectorService } from "./modules/connectors/connector.service.js";
+import { ConversationService } from "./modules/conversations/conversation.service.js";
+import { ModelRegistryService } from "./modules/models/model-registry.service.js";
 import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission, TaskProgressMessage, PermissionsAcknowledgedMessage } from "../../../packages/protocol/src/index.js";
 
 export interface BackendApp {
   server: ReturnType<typeof createServer>;
   database: Database;
   connectors: ConnectorService;
+  conversations: ConversationService;
+  models: ModelRegistryService;
   close(): Promise<void>;
 }
 
@@ -35,6 +39,8 @@ function requestBody(request: IncomingMessage): Promise<Record<string, unknown>>
 export function createBackendApp(databasePath = process.env.DATABASE_PATH): BackendApp {
   const database = new Database(databasePath);
   const connectors = new ConnectorService(database);
+  const conversations = new ConversationService(database);
+  const models = new ModelRegistryService(database);
   const activeSockets = new Map<string, WebSocket>();
   const sockets = new Set<WebSocket>();
   const rateWindows = new Map<string, { startedAt: number; count: number }>();
@@ -49,6 +55,38 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       if (current.count > 120) return json(response, 429, { ok: false, error: "RATE_LIMITED" });
       if (request.method === "GET" && request.url === "/health") return json(response, 200, { ok: true, service: "golden-agent-backend" });
       if (request.method === "GET" && request.url === "/ready") return json(response, 200, { ok: true, ready: true, service: "golden-agent-backend", database: "connected" });
+      if (request.method === "GET" && request.url?.startsWith("/v1/conversations")) {
+        const url = new URL(request.url, "http://localhost");
+        const conversationId = url.pathname.split("/")[3];
+        if (conversationId) {
+          const result = conversations.get(conversationId);
+          return result ? json(response, 200, { ok: true, ...result }) : json(response, 404, { ok: false, error: "CONVERSATION_NOT_FOUND" });
+        }
+        return json(response, 200, { ok: true, conversations: conversations.list(url.searchParams.get("workspaceId") ?? "default") });
+      }
+      if (request.method === "POST" && request.url === "/v1/conversations") {
+        const body = await requestBody(request);
+        return json(response, 201, { ok: true, conversation: conversations.create(String(body.title ?? "New conversation"), String(body.workspaceId ?? "default")) });
+      }
+      const messageMatch = request.url?.match(/^\/v1\/conversations\/([^/]+)\/messages$/);
+      if (request.method === "POST" && messageMatch) {
+        const body = await requestBody(request);
+        const role = body.role === "system" || body.role === "user" || body.role === "assistant" || body.role === "tool" ? body.role : "user";
+        const content = typeof body.content === "string" ? body.content : "";
+        if (!content.trim()) return json(response, 400, { ok: false, error: "MESSAGE_CONTENT_REQUIRED" });
+        const message = conversations.addMessage(messageMatch[1], role, content, (body.metadata ?? {}) as Record<string, unknown>);
+        return message ? json(response, 201, { ok: true, message }) : json(response, 404, { ok: false, error: "CONVERSATION_NOT_FOUND" });
+      }
+      if (request.method === "GET" && request.url === "/v1/providers") return json(response, 200, { ok: true, providers: models.listProviders() });
+      if (request.method === "POST" && request.url === "/v1/providers") {
+        const body = await requestBody(request);
+        return json(response, 201, { ok: true, provider: models.registerProvider({ name: String(body.name ?? ""), type: String(body.type ?? ""), config: (body.config ?? {}) as Record<string, unknown> }) });
+      }
+      if (request.method === "GET" && request.url === "/v1/models") return json(response, 200, { ok: true, models: models.listModels() });
+      if (request.method === "POST" && request.url === "/v1/models") {
+        const body = await requestBody(request);
+        return json(response, 201, { ok: true, model: models.registerModel({ providerId: String(body.providerId ?? ""), externalId: String(body.externalId ?? ""), displayName: typeof body.displayName === "string" ? body.displayName : undefined, capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : undefined }) });
+      }
       if (request.method === "POST" && request.url === "/v1/connectors/pairing") return json(response, 201, connectors.createPairing());
       const revokeMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/revoke$/);
       if (request.method === "POST" && revokeMatch) {
@@ -194,6 +232,8 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     server,
     database,
     connectors,
+    conversations,
+    models,
     close: async () => new Promise((resolve) => {
       let settled = false;
       const finish = () => { if (settled) return; settled = true; database.close(); resolve(); };
