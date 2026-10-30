@@ -1,5 +1,7 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createBackendApp } from "../../apps/backend/src/app.js";
 import { ConnectorClient } from "../../apps/connector/src/connection/client.js";
 import { ConnectorCore } from "../../apps/connector/src/core/connector-core.js";
@@ -15,7 +17,7 @@ async function waitFor<T>(read: () => Promise<T>, predicate: (value: T) => boole
 }
 
 async function main(): Promise<void> {
-  const app = createBackendApp(`/tmp/golden-agent-task-${Date.now()}.sqlite`);
+  const app = createBackendApp(join(tmpdir(), `golden-agent-task-${Date.now()}.sqlite`));
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   const address = app.server.address();
   if (!address || typeof address === "string") throw new Error("Task test server did not start");

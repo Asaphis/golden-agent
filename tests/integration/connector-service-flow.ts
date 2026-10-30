@@ -1,10 +1,12 @@
 import { strict as assert } from "node:assert";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createBackendApp } from "../../apps/backend/src/app.js";
 import { ConnectorServiceRuntime } from "../../apps/connector/src/service/service-runtime.js";
 import { sendIpc } from "../../apps/connector/src/ipc/ipc-client.js";
 
 async function main(): Promise<void> {
-  const app = createBackendApp(`/tmp/golden-agent-service-${Date.now()}.sqlite`);
+  const app = createBackendApp(join(tmpdir(), `golden-agent-service-${Date.now()}.sqlite`));
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   const address = app.server.address();
   if (!address || typeof address === "string") throw new Error("Backend did not start");

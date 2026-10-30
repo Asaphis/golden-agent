@@ -1,10 +1,12 @@
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createBackendApp } from "../../apps/backend/src/app.js";
 import { ConnectorClient } from "../../apps/connector/src/connection/client.js";
 
 async function main(): Promise<void> {
-  const databasePath = `/tmp/golden-agent-test-${Date.now()}.sqlite`;
+  const databasePath = join(tmpdir(), `golden-agent-test-${Date.now()}.sqlite`);
   const app = createBackendApp(databasePath);
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   const address = app.server.address();
