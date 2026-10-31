@@ -26,6 +26,11 @@ async function main(): Promise<void> {
     assert.equal(sessions.sessions.length, 2);
     const revoked = await (await fetch(`${base}/v1/auth/sessions/${login.session.sessionId}/revoke`, { method: "POST", headers: { authorization: `Bearer ${registered.token}` } })).json() as { ok: boolean };
     assert.equal(revoked.ok, true);
+    const invitedEmail = "member@example.com";
+    const invited = await (await fetch(`${base}/v1/workspaces/default/invitations`, { method: "POST", headers: { authorization: `Bearer ${registered.token}`, "content-type": "application/json" }, body: JSON.stringify({ email: invitedEmail, role: "member" }) })).json() as { token: string };
+    const member = await (await fetch(`${base}/v1/auth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: invitedEmail, password: "another correct password" }) })).json() as { token: string };
+    const accepted = await (await fetch(`${base}/v1/workspace-invitations/accept`, { method: "POST", headers: { authorization: `Bearer ${member.token}`, "content-type": "application/json" }, body: JSON.stringify({ token: invited.token }) })).json() as { membership: { role: string } };
+    assert.equal(accepted.membership.role, "member");
     const loggedOut = await (await fetch(`${base}/v1/auth/logout`, { method: "POST", headers: { authorization: `Bearer ${registered.token}` } })).json() as { ok: boolean };
     assert.equal(loggedOut.ok, true);
     const denied = await fetch(`${base}/v1/auth/me`, { headers: { authorization: `Bearer ${registered.token}` } });

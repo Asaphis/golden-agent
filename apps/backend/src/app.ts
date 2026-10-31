@@ -6,6 +6,7 @@ import { ConversationService } from "./modules/conversations/conversation.servic
 import { ModelRegistryService } from "./modules/models/model-registry.service.js";
 import { TaskOrchestrator } from "./modules/tasks/task-orchestrator.service.js";
 import { AccountService } from "./modules/auth/account.service.js";
+import { WorkspaceAccessService } from "./modules/workspaces/workspace-access.service.js";
 import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission, TaskProgressMessage, PermissionsAcknowledgedMessage } from "../../../packages/protocol/src/index.js";
 
 export interface BackendApp {
@@ -16,6 +17,7 @@ export interface BackendApp {
   models: ModelRegistryService;
   orchestrator: TaskOrchestrator;
   accounts: AccountService;
+  workspaceAccess: WorkspaceAccessService;
   close(): Promise<void>;
 }
 
@@ -43,6 +45,7 @@ function requestBody(request: IncomingMessage): Promise<Record<string, unknown>>
 export function createBackendApp(databasePath = process.env.DATABASE_PATH): BackendApp {
   const database = new Database(databasePath);
   const accounts = new AccountService(database);
+  const workspaceAccess = new WorkspaceAccessService(database);
   const conversations = new ConversationService(database);
   const models = new ModelRegistryService(database);
   const activeSockets = new Map<string, WebSocket>();
@@ -87,6 +90,22 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       if (request.method === "POST" && sessionRevokeMatch) {
         if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         return json(response, 200, { ok: accounts.logout(sessionRevokeMatch[1], authenticated.user.userId) });
+      }
+      const membersMatch = request.url?.match(/^\/v1\/workspaces\/([^/]+)\/members$/);
+      if (request.method === "GET" && membersMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        return json(response, 200, { ok: true, members: workspaceAccess.members(membersMatch[1], authenticated.user.userId) });
+      }
+      const inviteMatch = request.url?.match(/^\/v1\/workspaces\/([^/]+)\/invitations$/);
+      if (request.method === "POST" && inviteMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const body = await requestBody(request);
+        return json(response, 201, { ok: true, ...workspaceAccess.invite(inviteMatch[1], authenticated.user.userId, { email: String(body.email ?? ""), role: body.role as "admin" | "member" | "viewer" | undefined }) });
+      }
+      if (request.method === "POST" && request.url === "/v1/workspace-invitations/accept") {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const body = await requestBody(request);
+        return json(response, 200, { ok: true, membership: workspaceAccess.accept(String(body.token ?? ""), authenticated.user.userId, authenticated.user.email) });
       }
       if (request.method === "GET" && request.url?.startsWith("/v1/conversations")) {
         const url = new URL(request.url, "http://localhost");
@@ -304,6 +323,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     models,
     orchestrator,
     accounts,
+    workspaceAccess,
     close: async () => new Promise((resolve) => {
       let settled = false;
       const finish = () => { if (settled) return; settled = true; database.close(); resolve(); };

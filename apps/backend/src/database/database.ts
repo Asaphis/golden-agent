@@ -115,6 +115,17 @@ export interface WorkspaceMemberRecord {
   createdAt: string;
 }
 
+export interface WorkspaceInvitationRecord {
+  invitationId: string;
+  workspaceId: string;
+  email: string;
+  role: WorkspaceMemberRecord["role"];
+  tokenHash: string;
+  status: "pending" | "accepted" | "revoked" | "expired";
+  expiresAt: string;
+  createdAt: string;
+}
+
 export class Database {
   readonly db: DatabaseSync;
 
@@ -265,6 +276,17 @@ export class Database {
         PRIMARY KEY (workspace_id, user_id),
         FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id),
         FOREIGN KEY (user_id) REFERENCES users(user_id)
+      );
+      CREATE TABLE IF NOT EXISTS workspace_invitations (
+        invitation_id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        role TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id)
       );
     `);
     this.db.prepare("INSERT OR IGNORE INTO workspaces (workspace_id, name, created_at) VALUES (?, ?, ?)").run("default", "Default Workspace", new Date().toISOString());
@@ -486,6 +508,22 @@ export class Database {
     const row = this.db.prepare("SELECT * FROM workspace_members WHERE workspace_id = ? AND user_id = ?").get(workspaceId, userId) as Record<string, unknown> | undefined;
     return row ? { workspaceId: String(row.workspace_id), userId: String(row.user_id), role: row.role as WorkspaceMemberRecord["role"], createdAt: String(row.created_at) } : null;
   }
+
+  listWorkspaceMembers(workspaceId: string): Array<WorkspaceMemberRecord & { email: string; displayName: string }> {
+    const rows = this.db.prepare("SELECT wm.*, u.email, u.display_name FROM workspace_members wm JOIN users u ON u.user_id = wm.user_id WHERE wm.workspace_id = ? ORDER BY wm.created_at ASC").all(workspaceId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ workspaceId: String(row.workspace_id), userId: String(row.user_id), role: row.role as WorkspaceMemberRecord["role"], createdAt: String(row.created_at), email: String(row.email), displayName: String(row.display_name) }));
+  }
+
+  createWorkspaceInvitation(record: WorkspaceInvitationRecord): void {
+    this.db.prepare("INSERT INTO workspace_invitations (invitation_id, workspace_id, email, role, token_hash, status, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(record.invitationId, record.workspaceId, record.email, record.role, record.tokenHash, record.status, record.expiresAt, record.createdAt);
+  }
+
+  getWorkspaceInvitationByToken(tokenHash: string): WorkspaceInvitationRecord | null {
+    const row = this.db.prepare("SELECT * FROM workspace_invitations WHERE token_hash = ?").get(tokenHash) as Record<string, unknown> | undefined;
+    return row ? { invitationId: String(row.invitation_id), workspaceId: String(row.workspace_id), email: String(row.email), role: row.role as WorkspaceMemberRecord["role"], tokenHash: String(row.token_hash), status: row.status as WorkspaceInvitationRecord["status"], expiresAt: String(row.expires_at), createdAt: String(row.created_at) } : null;
+  }
+
+  updateWorkspaceInvitation(invitationId: string, status: WorkspaceInvitationRecord["status"]): void { this.db.prepare("UPDATE workspace_invitations SET status = ? WHERE invitation_id = ?").run(status, invitationId); }
 
   close(): void {
     this.db.close();
