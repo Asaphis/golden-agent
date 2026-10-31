@@ -5,6 +5,7 @@ import { ConnectorService } from "./modules/connectors/connector.service.js";
 import { ConversationService } from "./modules/conversations/conversation.service.js";
 import { ModelRegistryService } from "./modules/models/model-registry.service.js";
 import { TaskOrchestrator } from "./modules/tasks/task-orchestrator.service.js";
+import { AccountService } from "./modules/auth/account.service.js";
 import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission, TaskProgressMessage, PermissionsAcknowledgedMessage } from "../../../packages/protocol/src/index.js";
 
 export interface BackendApp {
@@ -14,6 +15,7 @@ export interface BackendApp {
   conversations: ConversationService;
   models: ModelRegistryService;
   orchestrator: TaskOrchestrator;
+  accounts: AccountService;
   close(): Promise<void>;
 }
 
@@ -40,6 +42,7 @@ function requestBody(request: IncomingMessage): Promise<Record<string, unknown>>
 
 export function createBackendApp(databasePath = process.env.DATABASE_PATH): BackendApp {
   const database = new Database(databasePath);
+  const accounts = new AccountService(database);
   const conversations = new ConversationService(database);
   const models = new ModelRegistryService(database);
   const activeSockets = new Map<string, WebSocket>();
@@ -62,6 +65,29 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       if (current.count > 120) return json(response, 429, { ok: false, error: "RATE_LIMITED" });
       if (request.method === "GET" && request.url === "/health") return json(response, 200, { ok: true, service: "golden-agent-backend" });
       if (request.method === "GET" && request.url === "/ready") return json(response, 200, { ok: true, ready: true, service: "golden-agent-backend", database: "connected" });
+      if (request.method === "POST" && request.url === "/v1/auth/register") {
+        const body = await requestBody(request);
+        const result = accounts.register({ email: String(body.email ?? ""), password: String(body.password ?? ""), displayName: typeof body.displayName === "string" ? body.displayName : undefined });
+        return json(response, 201, { ok: true, ...result });
+      }
+      if (request.method === "POST" && request.url === "/v1/auth/login") {
+        const body = await requestBody(request);
+        const result = accounts.login(String(body.email ?? ""), String(body.password ?? ""));
+        return json(response, 200, { ok: true, ...result });
+      }
+      const bearer = request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : "";
+      const authenticated = bearer ? accounts.authenticate(bearer) : null;
+      if (request.method === "GET" && request.url === "/v1/auth/me") return authenticated ? json(response, 200, { ok: true, user: authenticated.user, session: authenticated.session }) : json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+      if (request.method === "POST" && request.url === "/v1/auth/logout") {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        return json(response, 200, { ok: accounts.logout(authenticated.session.sessionId, authenticated.user.userId) });
+      }
+      if (request.method === "GET" && request.url === "/v1/auth/sessions") return authenticated ? json(response, 200, { ok: true, sessions: accounts.sessions(authenticated.user.userId) }) : json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+      const sessionRevokeMatch = request.url?.match(/^\/v1\/auth\/sessions\/([^/]+)\/revoke$/);
+      if (request.method === "POST" && sessionRevokeMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        return json(response, 200, { ok: accounts.logout(sessionRevokeMatch[1], authenticated.user.userId) });
+      }
       if (request.method === "GET" && request.url?.startsWith("/v1/conversations")) {
         const url = new URL(request.url, "http://localhost");
         const conversationId = url.pathname.split("/")[3];
@@ -277,6 +303,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     conversations,
     models,
     orchestrator,
+    accounts,
     close: async () => new Promise((resolve) => {
       let settled = false;
       const finish = () => { if (settled) return; settled = true; database.close(); resolve(); };

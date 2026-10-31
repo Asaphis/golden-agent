@@ -90,6 +90,31 @@ export interface TaskEventRecord {
   createdAt: string;
 }
 
+export interface UserRecord {
+  userId: string;
+  email: string;
+  passwordHash: string;
+  displayName: string;
+  createdAt: string;
+}
+
+export interface SessionRecord {
+  sessionId: string;
+  userId: string;
+  tokenHash: string;
+  expiresAt: string;
+  revokedAt: string | null;
+  createdAt: string;
+  lastSeenAt: string;
+}
+
+export interface WorkspaceMemberRecord {
+  workspaceId: string;
+  userId: string;
+  role: "owner" | "admin" | "member" | "viewer";
+  createdAt: string;
+}
+
 export class Database {
   readonly db: DatabaseSync;
 
@@ -214,6 +239,32 @@ export class Database {
         payload_json TEXT NOT NULL,
         created_at TEXT NOT NULL,
         FOREIGN KEY (task_id) REFERENCES tasks(task_id)
+      );
+      CREATE TABLE IF NOT EXISTS users (
+        user_id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        password_hash TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
+      );
+      CREATE TABLE IF NOT EXISTS workspace_members (
+        workspace_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        role TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, user_id),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(workspace_id),
+        FOREIGN KEY (user_id) REFERENCES users(user_id)
       );
     `);
     this.db.prepare("INSERT OR IGNORE INTO workspaces (workspace_id, name, created_at) VALUES (?, ?, ?)").run("default", "Default Workspace", new Date().toISOString());
@@ -394,6 +445,46 @@ export class Database {
   listTaskEvents(taskId: string): TaskEventRecord[] {
     const rows = this.db.prepare("SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at ASC").all(taskId) as Array<Record<string, unknown>>;
     return rows.map((row) => ({ eventId: String(row.event_id), taskId: String(row.task_id), type: String(row.type), payload: JSON.parse(String(row.payload_json)) as Record<string, unknown>, createdAt: String(row.created_at) }));
+  }
+
+  createUser(record: UserRecord): void {
+    this.db.prepare("INSERT INTO users (user_id, email, password_hash, display_name, created_at) VALUES (?, ?, ?, ?, ?)").run(record.userId, record.email, record.passwordHash, record.displayName, record.createdAt);
+  }
+
+  getUserByEmail(email: string): UserRecord | null {
+    const row = this.db.prepare("SELECT * FROM users WHERE email = ?").get(email) as Record<string, unknown> | undefined;
+    return row ? { userId: String(row.user_id), email: String(row.email), passwordHash: String(row.password_hash), displayName: String(row.display_name), createdAt: String(row.created_at) } : null;
+  }
+
+  getUser(userId: string): UserRecord | null {
+    const row = this.db.prepare("SELECT * FROM users WHERE user_id = ?").get(userId) as Record<string, unknown> | undefined;
+    return row ? { userId: String(row.user_id), email: String(row.email), passwordHash: String(row.password_hash), displayName: String(row.display_name), createdAt: String(row.created_at) } : null;
+  }
+
+  createSession(record: SessionRecord): void {
+    this.db.prepare("INSERT INTO sessions (session_id, user_id, token_hash, expires_at, revoked_at, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(record.sessionId, record.userId, record.tokenHash, record.expiresAt, record.revokedAt, record.createdAt, record.lastSeenAt);
+  }
+
+  getSessionByTokenHash(tokenHash: string): SessionRecord | null {
+    const row = this.db.prepare("SELECT * FROM sessions WHERE token_hash = ?").get(tokenHash) as Record<string, unknown> | undefined;
+    return row ? { sessionId: String(row.session_id), userId: String(row.user_id), tokenHash: String(row.token_hash), expiresAt: String(row.expires_at), revokedAt: row.revoked_at ? String(row.revoked_at) : null, createdAt: String(row.created_at), lastSeenAt: String(row.last_seen_at) } : null;
+  }
+
+  listSessions(userId: string): Array<Omit<SessionRecord, "tokenHash">> {
+    const rows = this.db.prepare("SELECT session_id, user_id, expires_at, revoked_at, created_at, last_seen_at FROM sessions WHERE user_id = ? ORDER BY created_at DESC").all(userId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ sessionId: String(row.session_id), userId: String(row.user_id), expiresAt: String(row.expires_at), revokedAt: row.revoked_at ? String(row.revoked_at) : null, createdAt: String(row.created_at), lastSeenAt: String(row.last_seen_at) }));
+  }
+
+  touchSession(sessionId: string, lastSeenAt: string): void { this.db.prepare("UPDATE sessions SET last_seen_at = ? WHERE session_id = ? AND revoked_at IS NULL").run(lastSeenAt, sessionId); }
+  revokeSession(sessionId: string, userId: string): boolean { const result = this.db.prepare("UPDATE sessions SET revoked_at = ? WHERE session_id = ? AND user_id = ? AND revoked_at IS NULL").run(new Date().toISOString(), sessionId, userId); return Number(result.changes) > 0; }
+
+  addWorkspaceMember(record: WorkspaceMemberRecord): void {
+    this.db.prepare("INSERT OR REPLACE INTO workspace_members (workspace_id, user_id, role, created_at) VALUES (?, ?, ?, ?)").run(record.workspaceId, record.userId, record.role, record.createdAt);
+  }
+
+  getWorkspaceMember(workspaceId: string, userId: string): WorkspaceMemberRecord | null {
+    const row = this.db.prepare("SELECT * FROM workspace_members WHERE workspace_id = ? AND user_id = ?").get(workspaceId, userId) as Record<string, unknown> | undefined;
+    return row ? { workspaceId: String(row.workspace_id), userId: String(row.user_id), role: row.role as WorkspaceMemberRecord["role"], createdAt: String(row.created_at) } : null;
   }
 
   close(): void {
