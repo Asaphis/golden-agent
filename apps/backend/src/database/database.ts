@@ -82,6 +82,14 @@ export interface PermissionRequestRecord {
   resolvedBy: string | null;
 }
 
+export interface TaskEventRecord {
+  eventId: string;
+  taskId: string;
+  type: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
 export class Database {
   readonly db: DatabaseSync;
 
@@ -198,6 +206,14 @@ export class Database {
         size INTEGER,
         path TEXT,
         created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS task_events (
+        event_id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (task_id) REFERENCES tasks(task_id)
       );
     `);
     this.db.prepare("INSERT OR IGNORE INTO workspaces (workspace_id, name, created_at) VALUES (?, ?, ?)").run("default", "Default Workspace", new Date().toISOString());
@@ -369,6 +385,15 @@ export class Database {
   resolvePermissionRequest(requestId: string, status: "approved" | "denied", resolvedBy: string): boolean {
     const result = this.db.prepare("UPDATE permission_requests SET status = ?, resolved_at = ?, resolved_by = ? WHERE request_id = ? AND status = 'pending'").run(status, new Date().toISOString(), resolvedBy, requestId);
     return Number(result.changes) > 0;
+  }
+
+  addTaskEvent(event: TaskEventRecord): void {
+    this.db.prepare("INSERT INTO task_events (event_id, task_id, type, payload_json, created_at) VALUES (?, ?, ?, ?, ?)").run(event.eventId, event.taskId, event.type, JSON.stringify(event.payload), event.createdAt);
+  }
+
+  listTaskEvents(taskId: string): TaskEventRecord[] {
+    const rows = this.db.prepare("SELECT * FROM task_events WHERE task_id = ? ORDER BY created_at ASC").all(taskId) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ eventId: String(row.event_id), taskId: String(row.task_id), type: String(row.type), payload: JSON.parse(String(row.payload_json)) as Record<string, unknown>, createdAt: String(row.created_at) }));
   }
 
   close(): void {

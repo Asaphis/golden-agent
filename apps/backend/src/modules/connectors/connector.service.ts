@@ -8,7 +8,12 @@ const DEFAULT_PERMISSIONS: Permission[] = ["connector.health"];
 export class ConnectorService {
   private readonly taskTimers = new Map<string, NodeJS.Timeout>();
 
-  constructor(private readonly database: Database) {}
+  constructor(private readonly database: Database, private readonly onTaskEvent?: (event: { taskId: string; type: string; payload: Record<string, unknown> }) => void) {}
+
+  private taskEvent(taskId: string, type: string, payload: Record<string, unknown>): void {
+    this.database.addTaskEvent({ eventId: randomUUID(), taskId, type, payload, createdAt: new Date().toISOString() });
+    this.onTaskEvent?.({ taskId, type, payload });
+  }
 
   createPairing(): { pairingId: string; pairingCode: string; expiresAt: string; qrPayload: string } {
     const pairingId = randomUUID();
@@ -94,6 +99,7 @@ export class ConnectorService {
     const task: TaskRecord = { taskId: randomUUID(), connectorId, operation, input, status: "queued", progress: 0, progressMessage: null, result: null, error: null, timeoutMs: Math.min(Math.max(timeoutMs, 100), 300_000), attempts: 0, artifactMetadata: [], createdAt: new Date().toISOString(), startedAt: null, finishedAt: null };
     this.database.createTask(task);
     this.database.addAudit("task.created", connectorId, { taskId: task.taskId, operation });
+    this.taskEvent(task.taskId, "task.created", { connectorId, operation });
     return task;
   }
 
@@ -101,10 +107,14 @@ export class ConnectorService {
     const task = this.database.getTask(taskId);
     if (!task || task.status !== "queued") return false;
     this.database.updateTask(taskId, { status: "running", startedAt: new Date().toISOString(), attempts: task.attempts + 1, progress: 5, progressMessage: "Dispatched to connector" });
+    this.taskEvent(taskId, "task.started", { connectorId: task.connectorId, operation: task.operation });
     socket.send(JSON.stringify({ type: "operation.request", requestId: task.taskId, taskId: task.taskId, operation: task.operation as OperationRequest["operation"], input: task.input, timeoutMs: task.timeoutMs } satisfies OperationRequest));
     const timer = setTimeout(() => {
       const current = this.database.getTask(taskId);
-      if (current && ["queued", "running"].includes(current.status)) this.database.updateTask(taskId, { status: "timed_out", error: { code: "TASK_TIMEOUT", message: "Task exceeded its timeout" }, finishedAt: new Date().toISOString(), progress: 100, progressMessage: "Timed out" });
+      if (current && ["queued", "running"].includes(current.status)) {
+        this.database.updateTask(taskId, { status: "timed_out", error: { code: "TASK_TIMEOUT", message: "Task exceeded its timeout" }, finishedAt: new Date().toISOString(), progress: 100, progressMessage: "Timed out" });
+        this.taskEvent(taskId, "task.timed_out", { code: "TASK_TIMEOUT" });
+      }
       this.taskTimers.delete(taskId);
     }, task.timeoutMs);
     this.taskTimers.set(taskId, timer);
@@ -120,6 +130,7 @@ export class ConnectorService {
     if (timer) clearTimeout(timer);
     this.taskTimers.delete(result.taskId);
     this.database.updateTask(result.taskId, { status: result.ok ? "succeeded" : "failed", progress: 100, progressMessage: result.ok ? "Completed" : "Failed", result: result.result ?? null, error: result.error ?? null, finishedAt: new Date().toISOString() });
+    this.taskEvent(result.taskId, result.ok ? "task.succeeded" : "task.failed", { result: result.result ?? null, error: result.error ?? null });
     this.database.addAudit(result.ok ? "task.succeeded" : "task.failed", connectorId, { taskId: result.taskId });
   }
 
@@ -127,6 +138,7 @@ export class ConnectorService {
     const task = this.database.getTask(message.taskId);
     if (!task || task.connectorId !== connectorId || !["queued", "running"].includes(task.status)) return;
     this.database.updateTask(message.taskId, { status: "running", progress: Math.min(99, Math.max(0, message.progress)), progressMessage: message.message ?? null });
+    this.taskEvent(message.taskId, "task.progress", { progress: Math.min(99, Math.max(0, message.progress)), message: message.message ?? null });
   }
 
   cancelTask(taskId: string, connectorId: string, socket?: WebSocket): boolean {
@@ -136,6 +148,7 @@ export class ConnectorService {
     if (timer) clearTimeout(timer);
     this.taskTimers.delete(taskId);
     this.database.updateTask(taskId, { status: "cancelled", progress: 100, progressMessage: "Cancelled", error: { code: "TASK_CANCELLED", message: "Task cancelled by request" }, finishedAt: new Date().toISOString() });
+    this.taskEvent(taskId, "task.cancelled", { code: "TASK_CANCELLED" });
     if (socket) socket.send(JSON.stringify({ type: "task.cancel", taskId }));
     this.database.addAudit("task.cancelled", connectorId, { taskId });
     return true;

@@ -40,11 +40,15 @@ function requestBody(request: IncomingMessage): Promise<Record<string, unknown>>
 
 export function createBackendApp(databasePath = process.env.DATABASE_PATH): BackendApp {
   const database = new Database(databasePath);
-  const connectors = new ConnectorService(database);
   const conversations = new ConversationService(database);
   const models = new ModelRegistryService(database);
   const activeSockets = new Map<string, WebSocket>();
   const sockets = new Set<WebSocket>();
+  const workspaceSockets = new Set<WebSocket>();
+  const connectors = new ConnectorService(database, (event) => {
+    const message = JSON.stringify({ type: "task.event", taskId: event.taskId, eventType: event.type, payload: event.payload });
+    for (const socket of workspaceSockets) if (socket.readyState === 1) socket.send(message);
+  });
   const orchestrator = new TaskOrchestrator(database, connectors, (connectorId) => activeSockets.get(connectorId));
   const rateWindows = new Map<string, { startedAt: number; count: number }>();
   const server = createServer(async (request, response) => {
@@ -166,6 +170,8 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         const ok = task ? connectors.retryTask(task.taskId, task.connectorId, socket) : false;
         return json(response, ok ? 202 : 409, { ok, task: ok ? connectors.getTask(taskRetryMatch[1]) : null });
       }
+      const taskEventsMatch = request.url?.match(/^\/v1\/tasks\/([^/]+)\/events$/);
+      if (request.method === "GET" && taskEventsMatch) return json(response, 200, { ok: true, events: database.listTaskEvents(taskEventsMatch[1]) });
       const taskStatusMatch = request.url?.match(/^\/v1\/tasks\/([^/]+)$/);
       if (request.method === "GET" && taskStatusMatch) {
         const task = connectors.getTask(taskStatusMatch[1]);
@@ -189,9 +195,20 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   });
 
   const websocketServer = new WebSocketServer({ noServer: true });
+  const workspaceWebSocketServer = new WebSocketServer({ noServer: true });
   server.on("upgrade", (request, socket, head) => {
+    if (request.url === "/events") {
+      workspaceWebSocketServer.handleUpgrade(request, socket, head, (ws) => workspaceWebSocketServer.emit("connection", ws, request));
+      return;
+    }
     if (request.url !== "/connect") { socket.destroy(); return; }
     websocketServer.handleUpgrade(request, socket, head, (ws) => websocketServer.emit("connection", ws, request));
+  });
+
+  workspaceWebSocketServer.on("connection", (socket: WebSocket) => {
+    workspaceSockets.add(socket);
+    socket.send(JSON.stringify({ type: "events.ready" }));
+    socket.on("close", () => workspaceSockets.delete(socket));
   });
 
   websocketServer.on("connection", (socket: WebSocket) => {
@@ -265,7 +282,9 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       const finish = () => { if (settled) return; settled = true; database.close(); resolve(); };
       const fallback = setTimeout(finish, 1_000);
       for (const socket of sockets) socket.terminate();
+      for (const socket of workspaceSockets) socket.terminate();
       websocketServer.close();
+      workspaceWebSocketServer.close();
       server.closeAllConnections?.();
       server.close(() => { clearTimeout(fallback); finish(); });
     }),
