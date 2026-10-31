@@ -108,20 +108,30 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         return json(response, 200, { ok: true, membership: workspaceAccess.accept(String(body.token ?? ""), authenticated.user.userId, authenticated.user.email) });
       }
       if (request.method === "GET" && request.url?.startsWith("/v1/conversations")) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         const url = new URL(request.url, "http://localhost");
         const conversationId = url.pathname.split("/")[3];
         if (conversationId) {
           const result = conversations.get(conversationId);
+          if (result && !database.getWorkspaceMember(result.conversation.workspaceId, authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
           return result ? json(response, 200, { ok: true, ...result }) : json(response, 404, { ok: false, error: "CONVERSATION_NOT_FOUND" });
         }
-        return json(response, 200, { ok: true, conversations: conversations.list(url.searchParams.get("workspaceId") ?? "default") });
+        const workspaceId = url.searchParams.get("workspaceId") ?? "default";
+        if (!database.getWorkspaceMember(workspaceId, authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        return json(response, 200, { ok: true, conversations: conversations.list(workspaceId) });
       }
       if (request.method === "POST" && request.url === "/v1/conversations") {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         const body = await requestBody(request);
-        return json(response, 201, { ok: true, conversation: conversations.create(String(body.title ?? "New conversation"), String(body.workspaceId ?? "default")) });
+        const workspaceId = String(body.workspaceId ?? "default");
+        if (!database.getWorkspaceMember(workspaceId, authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        return json(response, 201, { ok: true, conversation: conversations.create(String(body.title ?? "New conversation"), workspaceId) });
       }
       const messageMatch = request.url?.match(/^\/v1\/conversations\/([^/]+)\/messages$/);
       if (request.method === "POST" && messageMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const existingConversation = conversations.get(messageMatch[1]);
+        if (!existingConversation || !database.getWorkspaceMember(existingConversation.conversation.workspaceId, authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
         const body = await requestBody(request);
         const role = body.role === "system" || body.role === "user" || body.role === "assistant" || body.role === "tool" ? body.role : "user";
         const content = typeof body.content === "string" ? body.content : "";
