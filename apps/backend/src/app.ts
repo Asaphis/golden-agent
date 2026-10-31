@@ -139,15 +139,23 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         const message = conversations.addMessage(messageMatch[1], role, content, (body.metadata ?? {}) as Record<string, unknown>);
         return message ? json(response, 201, { ok: true, message }) : json(response, 404, { ok: false, error: "CONVERSATION_NOT_FOUND" });
       }
-      if (request.method === "GET" && request.url === "/v1/providers") return json(response, 200, { ok: true, providers: models.listProviders() });
-      if (request.method === "POST" && request.url === "/v1/providers") {
-        const body = await requestBody(request);
-        return json(response, 201, { ok: true, provider: models.registerProvider({ name: String(body.name ?? ""), type: String(body.type ?? ""), config: (body.config ?? {}) as Record<string, unknown> }) });
+      if (request.method === "GET" && request.url === "/v1/providers") {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        return json(response, 200, { ok: true, providers: models.listProviders("default") });
       }
-      if (request.method === "GET" && request.url === "/v1/models") return json(response, 200, { ok: true, models: models.listModels() });
-      if (request.method === "POST" && request.url === "/v1/models") {
+      if (request.method === "POST" && request.url === "/v1/providers") {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
         const body = await requestBody(request);
-        return json(response, 201, { ok: true, model: models.registerModel({ providerId: String(body.providerId ?? ""), externalId: String(body.externalId ?? ""), displayName: typeof body.displayName === "string" ? body.displayName : undefined, capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : undefined }) });
+        return json(response, 201, { ok: true, provider: models.registerProvider({ name: String(body.name ?? ""), type: String(body.type ?? ""), config: (body.config ?? {}) as Record<string, unknown>, ownerUserId: authenticated.user.userId, workspaceId: "default" }) });
+      }
+      if (request.method === "GET" && request.url === "/v1/models") {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        return json(response, 200, { ok: true, models: models.listModels("default") });
+      }
+      if (request.method === "POST" && request.url === "/v1/models") {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        const body = await requestBody(request);
+        return json(response, 201, { ok: true, model: models.registerModel({ providerId: String(body.providerId ?? ""), externalId: String(body.externalId ?? ""), displayName: typeof body.displayName === "string" ? body.displayName : undefined, capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : undefined, ownerUserId: authenticated.user.userId, workspaceId: "default" }) });
       }
       if (request.method === "GET" && request.url?.startsWith("/v1/permission-requests")) {
         const url = new URL(request.url, "http://localhost");

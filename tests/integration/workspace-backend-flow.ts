@@ -21,8 +21,8 @@ async function main(): Promise<void> {
     assert.equal(message.message.content, "Hello Golden Agent");
     const detail = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}`, { headers: authHeaders })).json() as { messages: Array<{ role: string }> };
     assert.equal(detail.messages.length, 1);
-    const provider = await (await fetch(`${base}/v1/providers`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Local Ollama", type: "ollama" }) })).json() as { provider: { providerId: string } };
-    const model = await (await fetch(`${base}/v1/models`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ providerId: provider.provider.providerId, externalId: "llama3.2", capabilities: ["text", "streaming"] }) })).json() as { model: { externalId: string } };
+    const provider = await (await fetch(`${base}/v1/providers`, { method: "POST", headers: authHeaders, body: JSON.stringify({ name: "Local Ollama", type: "ollama" }) })).json() as { provider: { providerId: string } };
+    const model = await (await fetch(`${base}/v1/models`, { method: "POST", headers: authHeaders, body: JSON.stringify({ providerId: provider.provider.providerId, externalId: "llama3.2", capabilities: ["text", "streaming"] }) })).json() as { model: { externalId: string } };
     assert.equal(model.model.externalId, "llama3.2");
     const connectorId = randomUUID();
     app.database.createConnector({ connectorId, deviceId: randomUUID(), deviceName: "Workspace test connector", platform: "linux", status: "online", accessToken: null, tokenExpiresAt: null, permissions: ["connector.health"], capabilities: ["system.info", "terminal.execute"], lastSeenAt: new Date().toISOString() });

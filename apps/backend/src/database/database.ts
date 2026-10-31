@@ -58,6 +58,8 @@ export interface ProviderRecord {
   status: "active" | "disabled";
   config: Record<string, unknown>;
   createdAt: string;
+  ownerUserId?: string;
+  workspaceId?: string;
 }
 
 export interface ModelRecord {
@@ -68,6 +70,8 @@ export interface ModelRecord {
   capabilities: string[];
   enabled: boolean;
   createdAt: string;
+  ownerUserId?: string;
+  workspaceId?: string;
 }
 
 export interface PermissionRequestRecord {
@@ -210,6 +214,8 @@ export class Database {
         type TEXT NOT NULL,
         status TEXT NOT NULL,
         config_json TEXT NOT NULL,
+        owner_user_id TEXT NOT NULL DEFAULT 'system',
+        workspace_id TEXT NOT NULL DEFAULT 'default',
         created_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS models (
@@ -219,6 +225,8 @@ export class Database {
         display_name TEXT NOT NULL,
         capabilities_json TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
+        owner_user_id TEXT NOT NULL DEFAULT 'system',
+        workspace_id TEXT NOT NULL DEFAULT 'default',
         created_at TEXT NOT NULL,
         UNIQUE(provider_id, external_id),
         FOREIGN KEY (provider_id) REFERENCES providers(provider_id)
@@ -292,6 +300,10 @@ export class Database {
     this.db.prepare("INSERT OR IGNORE INTO workspaces (workspace_id, name, created_at) VALUES (?, ?, ?)").run("default", "Default Workspace", new Date().toISOString());
     try { this.db.exec("ALTER TABLE connectors ADD COLUMN token_expires_at TEXT"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE connectors ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE providers ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'system'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE providers ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE models ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'system'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE models ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
   }
 
   createPairing(id: string, code: string, expiresAt: string): void {
@@ -425,21 +437,21 @@ export class Database {
   }
 
   upsertProvider(record: ProviderRecord): void {
-    this.db.prepare("INSERT INTO providers (provider_id, name, type, status, config_json, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(provider_id) DO UPDATE SET name = excluded.name, type = excluded.type, status = excluded.status, config_json = excluded.config_json").run(record.providerId, record.name, record.type, record.status, JSON.stringify(record.config), record.createdAt);
+    this.db.prepare("INSERT INTO providers (provider_id, name, type, status, config_json, owner_user_id, workspace_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(provider_id) DO UPDATE SET name = excluded.name, type = excluded.type, status = excluded.status, config_json = excluded.config_json").run(record.providerId, record.name, record.type, record.status, JSON.stringify(record.config), record.ownerUserId ?? "system", record.workspaceId ?? "default", record.createdAt);
   }
 
-  listProviders(): ProviderRecord[] {
-    const rows = this.db.prepare("SELECT * FROM providers ORDER BY name ASC").all() as Array<Record<string, unknown>>;
-    return rows.map((row) => ({ providerId: String(row.provider_id), name: String(row.name), type: String(row.type), status: row.status as ProviderRecord["status"], config: JSON.parse(String(row.config_json)) as Record<string, unknown>, createdAt: String(row.created_at) }));
+  listProviders(workspaceId?: string): ProviderRecord[] {
+    const rows = (workspaceId ? this.db.prepare("SELECT * FROM providers WHERE workspace_id = ? ORDER BY name ASC").all(workspaceId) : this.db.prepare("SELECT * FROM providers ORDER BY name ASC").all()) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ providerId: String(row.provider_id), name: String(row.name), type: String(row.type), status: row.status as ProviderRecord["status"], config: JSON.parse(String(row.config_json)) as Record<string, unknown>, ownerUserId: String(row.owner_user_id), workspaceId: String(row.workspace_id), createdAt: String(row.created_at) }));
   }
 
   upsertModel(record: ModelRecord): void {
-    this.db.prepare("INSERT INTO models (model_id, provider_id, external_id, display_name, capabilities_json, enabled, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(model_id) DO UPDATE SET display_name = excluded.display_name, capabilities_json = excluded.capabilities_json, enabled = excluded.enabled").run(record.modelId, record.providerId, record.externalId, record.displayName, JSON.stringify(record.capabilities), record.enabled ? 1 : 0, record.createdAt);
+    this.db.prepare("INSERT INTO models (model_id, provider_id, external_id, display_name, capabilities_json, enabled, owner_user_id, workspace_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(model_id) DO UPDATE SET display_name = excluded.display_name, capabilities_json = excluded.capabilities_json, enabled = excluded.enabled").run(record.modelId, record.providerId, record.externalId, record.displayName, JSON.stringify(record.capabilities), record.enabled ? 1 : 0, record.ownerUserId ?? "system", record.workspaceId ?? "default", record.createdAt);
   }
 
-  listModels(): ModelRecord[] {
-    const rows = this.db.prepare("SELECT * FROM models ORDER BY display_name ASC").all() as Array<Record<string, unknown>>;
-    return rows.map((row) => ({ modelId: String(row.model_id), providerId: String(row.provider_id), externalId: String(row.external_id), displayName: String(row.display_name), capabilities: JSON.parse(String(row.capabilities_json)) as string[], enabled: Boolean(row.enabled), createdAt: String(row.created_at) }));
+  listModels(workspaceId?: string): ModelRecord[] {
+    const rows = (workspaceId ? this.db.prepare("SELECT * FROM models WHERE workspace_id = ? ORDER BY display_name ASC").all(workspaceId) : this.db.prepare("SELECT * FROM models ORDER BY display_name ASC").all()) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({ modelId: String(row.model_id), providerId: String(row.provider_id), externalId: String(row.external_id), displayName: String(row.display_name), capabilities: JSON.parse(String(row.capabilities_json)) as string[], enabled: Boolean(row.enabled), ownerUserId: String(row.owner_user_id), workspaceId: String(row.workspace_id), createdAt: String(row.created_at) }));
   }
 
   createPermissionRequest(record: PermissionRequestRecord): void {
