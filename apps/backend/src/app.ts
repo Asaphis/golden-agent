@@ -4,6 +4,7 @@ import { Database } from "./database/database.js";
 import { ConnectorService } from "./modules/connectors/connector.service.js";
 import { ConversationService } from "./modules/conversations/conversation.service.js";
 import { ModelRegistryService } from "./modules/models/model-registry.service.js";
+import { ModelGatewayService } from "./modules/models/model-gateway.service.js";
 import { TaskOrchestrator } from "./modules/tasks/task-orchestrator.service.js";
 import { AccountService } from "./modules/auth/account.service.js";
 import { WorkspaceAccessService } from "./modules/workspaces/workspace-access.service.js";
@@ -15,6 +16,7 @@ export interface BackendApp {
   connectors: ConnectorService;
   conversations: ConversationService;
   models: ModelRegistryService;
+  modelGateway: ModelGatewayService;
   orchestrator: TaskOrchestrator;
   accounts: AccountService;
   workspaceAccess: WorkspaceAccessService;
@@ -48,6 +50,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   const workspaceAccess = new WorkspaceAccessService(database);
   const conversations = new ConversationService(database);
   const models = new ModelRegistryService(database);
+  const modelGateway = new ModelGatewayService(database);
   const activeSockets = new Map<string, WebSocket>();
   const sockets = new Set<WebSocket>();
   const workspaceSockets = new Set<WebSocket>();
@@ -157,37 +160,76 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         const body = await requestBody(request);
         return json(response, 201, { ok: true, model: models.registerModel({ providerId: String(body.providerId ?? ""), externalId: String(body.externalId ?? ""), displayName: typeof body.displayName === "string" ? body.displayName : undefined, capabilities: Array.isArray(body.capabilities) ? body.capabilities.map(String) : undefined, ownerUserId: authenticated.user.userId, workspaceId: "default" }) });
       }
+      const modelExecuteMatch = request.url?.match(/^\/v1\/models\/([^/]+)\/execute$/);
+      if (request.method === "POST" && modelExecuteMatch) {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        const body = await requestBody(request);
+        const result = await modelGateway.execute(modelExecuteMatch[1], "default", String(body.prompt ?? ""), Number(body.timeoutMs ?? 120_000));
+        return json(response, 200, { ok: true, result });
+      }
+      const modelStreamMatch = request.url?.match(/^\/v1\/models\/([^/]+)\/stream$/);
+      if (request.method === "POST" && modelStreamMatch) {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        const body = await requestBody(request);
+        response.writeHead(200, { "content-type": "application/x-ndjson", "access-control-allow-origin": "*" });
+        for await (const chunk of modelGateway.stream(modelStreamMatch[1], "default", String(body.prompt ?? ""), Number(body.timeoutMs ?? 120_000))) response.write(`${JSON.stringify({ type: "model.chunk", chunk })}\n`);
+        response.end(JSON.stringify({ type: "model.done" }) + "\n");
+        return;
+      }
+      const providerDiscoverMatch = request.url?.match(/^\/v1\/providers\/([^/]+)\/discover$/);
+      if (request.method === "POST" && providerDiscoverMatch) {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        return json(response, 200, { ok: true, models: await modelGateway.discover(providerDiscoverMatch[1], "default") });
+      }
       if (request.method === "GET" && request.url?.startsWith("/v1/permission-requests")) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         const url = new URL(request.url, "http://localhost");
         const status = url.searchParams.get("status");
-        return json(response, 200, { ok: true, requests: orchestrator.listPermissionRequests(status === "pending" || status === "approved" || status === "denied" ? status : undefined) });
+        const requests = orchestrator.listPermissionRequests(status === "pending" || status === "approved" || status === "denied" ? status : undefined).filter((item) => item.ownerUserId === authenticated.user.userId && item.workspaceId === "default");
+        return json(response, 200, { ok: true, requests });
       }
       const permissionResolveMatch = request.url?.match(/^\/v1\/permission-requests\/([^/]+)\/resolve$/);
       if (request.method === "POST" && permissionResolveMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const existingRequest = orchestrator.listPermissionRequests().find((item) => item.requestId === permissionResolveMatch[1]);
+        if (!existingRequest || existingRequest.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "PERMISSION_REQUEST_ACCESS_DENIED" });
         const body = await requestBody(request);
         const approved = body.approved === true;
         return json(response, 200, { ok: true, request: orchestrator.resolvePermission(permissionResolveMatch[1], approved, typeof body.resolvedBy === "string" ? body.resolvedBy : "workspace") });
       }
       if (request.method === "POST" && request.url === "/v1/tasks") {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         const body = await requestBody(request);
         if (typeof body.connectorId !== "string" || typeof body.operation !== "string") return json(response, 400, { ok: false, error: "CONNECTOR_AND_OPERATION_REQUIRED" });
-        const result = orchestrator.createOrDispatch({ connectorId: body.connectorId, operation: body.operation as Parameters<ConnectorService["createTask"]>[1], taskInput: (body.input ?? {}) as Record<string, unknown>, timeoutMs: Number(body.timeoutMs ?? 30_000) });
+        const result = orchestrator.createOrDispatch({ connectorId: body.connectorId, operation: body.operation as Parameters<ConnectorService["createTask"]>[1], taskInput: (body.input ?? {}) as Record<string, unknown>, timeoutMs: Number(body.timeoutMs ?? 30_000), ownerUserId: authenticated.user.userId, workspaceId: "default" });
         return result.permissionRequest ? json(response, 202, { ok: true, status: "permission_required", permissionRequest: result.permissionRequest }) : json(response, 202, { ok: true, status: "dispatched", task: result.task });
       }
-      if (request.method === "POST" && request.url === "/v1/connectors/pairing") return json(response, 201, connectors.createPairing());
+      if (request.method === "POST" && request.url === "/v1/connectors/pairing") {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        return json(response, 201, connectors.createPairing(authenticated.user.userId, "default"));
+      }
       if (request.method === "GET" && request.url?.startsWith("/v1/connectors")) {
         const url = new URL(request.url, "http://localhost");
         const connectorId = url.pathname.split("/")[3];
-        if (!connectorId) return json(response, 200, { ok: true, connectors: database.listConnectors() });
+        if (!connectorId) {
+          if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+          return json(response, 200, { ok: true, connectors: database.listConnectors().filter((item) => item.ownerUserId === authenticated.user.userId && item.workspaceId === "default") });
+        }
       }
       const revokeMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/revoke$/);
       if (request.method === "POST" && revokeMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const ownedConnector = connectors.getConnector(revokeMatch[1]);
+        if (!ownedConnector || ownedConnector.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "CONNECTOR_ACCESS_DENIED" });
         const ok = connectors.revoke(revokeMatch[1]);
         if (ok) activeSockets.get(revokeMatch[1])?.terminate();
         return json(response, ok ? 200 : 404, { ok });
       }
       const rotateMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/rotate-token$/);
       if (request.method === "POST" && rotateMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const ownedConnector = connectors.getConnector(rotateMatch[1]);
+        if (!ownedConnector || ownedConnector.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "CONNECTOR_ACCESS_DENIED" });
         const rotated = connectors.rotateToken(rotateMatch[1]);
         const socket = activeSockets.get(rotateMatch[1]);
         if (rotated && socket) { socket.send(JSON.stringify({ type: "token.rotated", connectorId: rotateMatch[1], ...rotated })); socket.close(4001, "Token rotated"); }
@@ -195,6 +237,9 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       }
       const permissionsMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/permissions$/);
       if (request.method === "POST" && permissionsMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const ownedConnector = connectors.getConnector(permissionsMatch[1]);
+        if (!ownedConnector || ownedConnector.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "CONNECTOR_ACCESS_DENIED" });
         const body = await requestBody(request);
         const permissions = Array.isArray(body.permissions) ? body.permissions.map(String) as Permission[] : [];
         const ok = connectors.updatePermissions(permissionsMatch[1], permissions);
@@ -202,6 +247,9 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       }
       const operationMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/operations$/);
       if (request.method === "POST" && operationMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const ownedConnector = connectors.getConnector(operationMatch[1]);
+        if (!ownedConnector || ownedConnector.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "CONNECTOR_ACCESS_DENIED" });
         const body = await requestBody(request);
         const socket = activeSockets.get(operationMatch[1]);
         const operation = typeof body.operation === "string" ? body.operation as Parameters<ConnectorService["requestOperation"]>[2] : undefined;
@@ -211,6 +259,9 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       }
       const taskCreateMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)\/tasks$/);
       if (request.method === "POST" && taskCreateMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const ownedConnector = connectors.getConnector(taskCreateMatch[1]);
+        if (!ownedConnector || ownedConnector.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "CONNECTOR_ACCESS_DENIED" });
         const body = await requestBody(request);
         const socket = activeSockets.get(taskCreateMatch[1]);
         const operation = typeof body.operation === "string" ? body.operation as Parameters<ConnectorService["createTask"]>[1] : undefined;
@@ -221,23 +272,34 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
       }
       const taskCancelMatch = request.url?.match(/^\/v1\/tasks\/([^/]+)\/cancel$/);
       if (request.method === "POST" && taskCancelMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         const task = connectors.getTask(taskCancelMatch[1]);
+        if (!task || task.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "TASK_ACCESS_DENIED" });
         const socket = task ? activeSockets.get(task.connectorId) : undefined;
         const ok = task ? connectors.cancelTask(task.taskId, task.connectorId, socket) : false;
         return json(response, ok ? 202 : 404, { ok, task: ok ? connectors.getTask(taskCancelMatch[1]) : null });
       }
       const taskRetryMatch = request.url?.match(/^\/v1\/tasks\/([^/]+)\/retry$/);
       if (request.method === "POST" && taskRetryMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         const task = connectors.getTask(taskRetryMatch[1]);
+        if (!task || task.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "TASK_ACCESS_DENIED" });
         const socket = task ? activeSockets.get(task.connectorId) : undefined;
         const ok = task ? connectors.retryTask(task.taskId, task.connectorId, socket) : false;
         return json(response, ok ? 202 : 409, { ok, task: ok ? connectors.getTask(taskRetryMatch[1]) : null });
       }
       const taskEventsMatch = request.url?.match(/^\/v1\/tasks\/([^/]+)\/events$/);
-      if (request.method === "GET" && taskEventsMatch) return json(response, 200, { ok: true, events: database.listTaskEvents(taskEventsMatch[1]) });
+      if (request.method === "GET" && taskEventsMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const task = connectors.getTask(taskEventsMatch[1]);
+        if (!task || task.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "TASK_ACCESS_DENIED" });
+        return json(response, 200, { ok: true, events: database.listTaskEvents(taskEventsMatch[1]) });
+      }
       const taskStatusMatch = request.url?.match(/^\/v1\/tasks\/([^/]+)$/);
       if (request.method === "GET" && taskStatusMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
         const task = connectors.getTask(taskStatusMatch[1]);
+        if (task && task.ownerUserId !== authenticated.user.userId) return json(response, 403, { ok: false, error: "TASK_ACCESS_DENIED" });
         return task ? json(response, 200, { ok: true, task }) : json(response, 404, { ok: false, error: "TASK_NOT_FOUND" });
       }
       const statusMatch = request.url?.match(/^\/v1\/connectors\/([^/]+)$/);
@@ -339,6 +401,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     connectors,
     conversations,
     models,
+    modelGateway,
     orchestrator,
     accounts,
     workspaceAccess,

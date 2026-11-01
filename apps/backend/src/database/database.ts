@@ -13,6 +13,8 @@ export interface ConnectorRecord {
   permissions: string[];
   capabilities?: string[];
   lastSeenAt: string | null;
+  ownerUserId?: string;
+  workspaceId?: string;
 }
 
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled" | "timed_out";
@@ -32,6 +34,8 @@ export interface TaskRecord {
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+  ownerUserId?: string;
+  workspaceId?: string;
 }
 
 export interface ConversationRecord {
@@ -84,6 +88,8 @@ export interface PermissionRequestRecord {
   createdAt: string;
   resolvedAt: string | null;
   resolvedBy: string | null;
+  ownerUserId?: string;
+  workspaceId?: string;
 }
 
 export interface TaskEventRecord {
@@ -149,7 +155,9 @@ export class Database {
         status TEXT NOT NULL DEFAULT 'pending',
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL,
-        consumed_at TEXT
+        consumed_at TEXT,
+        owner_user_id TEXT NOT NULL DEFAULT 'system',
+        workspace_id TEXT NOT NULL DEFAULT 'default'
       );
       CREATE TABLE IF NOT EXISTS connectors (
         connector_id TEXT PRIMARY KEY,
@@ -160,7 +168,9 @@ export class Database {
         access_token TEXT,
         permissions_json TEXT NOT NULL,
         capabilities_json TEXT NOT NULL DEFAULT '[]',
-        last_seen_at TEXT
+        last_seen_at TEXT,
+        owner_user_id TEXT NOT NULL DEFAULT 'system',
+        workspace_id TEXT NOT NULL DEFAULT 'default'
       );
       CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -184,7 +194,9 @@ export class Database {
         artifacts_json TEXT NOT NULL DEFAULT '[]',
         created_at TEXT NOT NULL,
         started_at TEXT,
-        finished_at TEXT
+        finished_at TEXT,
+        owner_user_id TEXT NOT NULL DEFAULT 'system',
+        workspace_id TEXT NOT NULL DEFAULT 'default'
       );
       CREATE TABLE IF NOT EXISTS workspaces (
         workspace_id TEXT PRIMARY KEY,
@@ -240,7 +252,9 @@ export class Database {
         status TEXT NOT NULL,
         created_at TEXT NOT NULL,
         resolved_at TEXT,
-        resolved_by TEXT
+        resolved_by TEXT,
+        owner_user_id TEXT NOT NULL DEFAULT 'system',
+        workspace_id TEXT NOT NULL DEFAULT 'default'
       );
       CREATE TABLE IF NOT EXISTS artifacts (
         artifact_id TEXT PRIMARY KEY,
@@ -304,23 +318,31 @@ export class Database {
     try { this.db.exec("ALTER TABLE providers ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE models ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'system'"); } catch { /* already migrated */ }
     try { this.db.exec("ALTER TABLE models ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE pairing_requests ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'system'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE pairing_requests ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE connectors ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'system'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE connectors ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE tasks ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'system'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE tasks ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE permission_requests ADD COLUMN owner_user_id TEXT NOT NULL DEFAULT 'system'"); } catch { /* already migrated */ }
+    try { this.db.exec("ALTER TABLE permission_requests ADD COLUMN workspace_id TEXT NOT NULL DEFAULT 'default'"); } catch { /* already migrated */ }
   }
 
-  createPairing(id: string, code: string, expiresAt: string): void {
+  createPairing(id: string, code: string, expiresAt: string, ownerUserId = "system", workspaceId = "default"): void {
     this.db.prepare(
-      "INSERT INTO pairing_requests (id, code, created_at, expires_at) VALUES (?, ?, ?, ?)"
-    ).run(id, code, new Date().toISOString(), expiresAt);
+      "INSERT INTO pairing_requests (id, code, created_at, expires_at, owner_user_id, workspace_id) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(id, code, new Date().toISOString(), expiresAt, ownerUserId, workspaceId);
   }
 
-  consumePairing(code: string): boolean {
+  consumePairing(code: string): { ownerUserId: string; workspaceId: string } | null {
     const row = this.db.prepare(
-      "SELECT id FROM pairing_requests WHERE code = ? AND status = 'pending' AND expires_at > ?"
-    ).get(code, new Date().toISOString()) as { id?: string } | undefined;
-    if (!row?.id) return false;
+      "SELECT id, owner_user_id, workspace_id FROM pairing_requests WHERE code = ? AND status = 'pending' AND expires_at > ?"
+    ).get(code, new Date().toISOString()) as { id?: string; owner_user_id?: string; workspace_id?: string } | undefined;
+    if (!row?.id) return null;
     this.db.prepare(
       "UPDATE pairing_requests SET status = 'consumed', consumed_at = ? WHERE id = ?"
     ).run(new Date().toISOString(), row.id);
-    return true;
+    return { ownerUserId: row.owner_user_id ?? "system", workspaceId: row.workspace_id ?? "default" };
   }
 
   createConnector(record: ConnectorRecord): void {
@@ -340,6 +362,7 @@ export class Database {
       record.lastSeenAt,
     );
     this.db.prepare("UPDATE connectors SET token_expires_at = ? WHERE connector_id = ?").run(record.tokenExpiresAt, record.connectorId);
+    this.db.prepare("UPDATE connectors SET owner_user_id = ?, workspace_id = ? WHERE connector_id = ?").run(record.ownerUserId ?? "system", record.workspaceId ?? "default", record.connectorId);
   }
 
   getConnector(connectorId: string): ConnectorRecord | null {
@@ -356,12 +379,14 @@ export class Database {
       permissions: JSON.parse(String(row.permissions_json)) as string[],
       capabilities: row.capabilities_json ? JSON.parse(String(row.capabilities_json)) as string[] : [],
       lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null,
+      ownerUserId: String(row.owner_user_id ?? "system"),
+      workspaceId: String(row.workspace_id ?? "default"),
     };
   }
 
   listConnectors(): ConnectorRecord[] {
     const rows = this.db.prepare("SELECT * FROM connectors ORDER BY device_name ASC").all() as Array<Record<string, unknown>>;
-    return rows.map((row) => ({ connectorId: String(row.connector_id), deviceId: String(row.device_id), deviceName: String(row.device_name), platform: String(row.platform), status: row.status as ConnectorRecord["status"], accessToken: null, tokenExpiresAt: row.token_expires_at ? String(row.token_expires_at) : null, permissions: JSON.parse(String(row.permissions_json)) as string[], capabilities: row.capabilities_json ? JSON.parse(String(row.capabilities_json)) as string[] : [], lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null }));
+    return rows.map((row) => ({ connectorId: String(row.connector_id), deviceId: String(row.device_id), deviceName: String(row.device_name), platform: String(row.platform), status: row.status as ConnectorRecord["status"], accessToken: null, tokenExpiresAt: row.token_expires_at ? String(row.token_expires_at) : null, permissions: JSON.parse(String(row.permissions_json)) as string[], capabilities: row.capabilities_json ? JSON.parse(String(row.capabilities_json)) as string[] : [], lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null, ownerUserId: String(row.owner_user_id ?? "system"), workspaceId: String(row.workspace_id ?? "default") }));
   }
 
   updateHeartbeat(connectorId: string, timestamp: string, capabilities: string[] = []): void {
@@ -394,15 +419,15 @@ export class Database {
 
   createTask(task: TaskRecord): void {
     this.db.prepare(`INSERT INTO tasks
-      (task_id, connector_id, operation, input_json, status, progress, progress_message, result_json, error_json, timeout_ms, attempts, artifacts_json, created_at, started_at, finished_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(task.taskId, task.connectorId, task.operation, JSON.stringify(task.input), task.status, task.progress, task.progressMessage, null, null, task.timeoutMs, task.attempts, JSON.stringify(task.artifactMetadata), task.createdAt, task.startedAt, task.finishedAt);
+      (task_id, connector_id, operation, input_json, status, progress, progress_message, result_json, error_json, timeout_ms, attempts, artifacts_json, created_at, started_at, finished_at, owner_user_id, workspace_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(task.taskId, task.connectorId, task.operation, JSON.stringify(task.input), task.status, task.progress, task.progressMessage, null, null, task.timeoutMs, task.attempts, JSON.stringify(task.artifactMetadata), task.createdAt, task.startedAt, task.finishedAt, task.ownerUserId ?? "system", task.workspaceId ?? "default");
   }
 
   getTask(taskId: string): TaskRecord | null {
     const row = this.db.prepare("SELECT * FROM tasks WHERE task_id = ?").get(taskId) as Record<string, unknown> | undefined;
     if (!row) return null;
-    return { taskId: String(row.task_id), connectorId: String(row.connector_id), operation: String(row.operation), input: JSON.parse(String(row.input_json)), status: row.status as TaskStatus, progress: Number(row.progress), progressMessage: row.progress_message ? String(row.progress_message) : null, result: row.result_json ? JSON.parse(String(row.result_json)) : null, error: row.error_json ? JSON.parse(String(row.error_json)) : null, timeoutMs: Number(row.timeout_ms), attempts: Number(row.attempts), artifactMetadata: JSON.parse(String(row.artifacts_json)), createdAt: String(row.created_at), startedAt: row.started_at ? String(row.started_at) : null, finishedAt: row.finished_at ? String(row.finished_at) : null };
+    return { taskId: String(row.task_id), connectorId: String(row.connector_id), operation: String(row.operation), input: JSON.parse(String(row.input_json)), status: row.status as TaskStatus, progress: Number(row.progress), progressMessage: row.progress_message ? String(row.progress_message) : null, result: row.result_json ? JSON.parse(String(row.result_json)) : null, error: row.error_json ? JSON.parse(String(row.error_json)) : null, timeoutMs: Number(row.timeout_ms), attempts: Number(row.attempts), artifactMetadata: JSON.parse(String(row.artifacts_json)), createdAt: String(row.created_at), startedAt: row.started_at ? String(row.started_at) : null, finishedAt: row.finished_at ? String(row.finished_at) : null, ownerUserId: String(row.owner_user_id ?? "system"), workspaceId: String(row.workspace_id ?? "default") };
   }
 
   updateTask(taskId: string, patch: Partial<Pick<TaskRecord, "status" | "progress" | "progressMessage" | "result" | "error" | "attempts" | "startedAt" | "finishedAt" | "artifactMetadata">>): void {
@@ -455,12 +480,12 @@ export class Database {
   }
 
   createPermissionRequest(record: PermissionRequestRecord): void {
-    this.db.prepare("INSERT INTO permission_requests (request_id, task_id, connector_id, permission, scope, status, created_at, resolved_at, resolved_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(record.requestId, record.taskId, record.connectorId, record.permission, record.scope, record.status, record.createdAt, record.resolvedAt, record.resolvedBy);
+    this.db.prepare("INSERT INTO permission_requests (request_id, task_id, connector_id, permission, scope, status, created_at, resolved_at, resolved_by, owner_user_id, workspace_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(record.requestId, record.taskId, record.connectorId, record.permission, record.scope, record.status, record.createdAt, record.resolvedAt, record.resolvedBy, record.ownerUserId ?? "system", record.workspaceId ?? "default");
   }
 
   listPermissionRequests(status?: PermissionRequestRecord["status"]): PermissionRequestRecord[] {
     const rows = (status ? this.db.prepare("SELECT * FROM permission_requests WHERE status = ? ORDER BY created_at DESC").all(status) : this.db.prepare("SELECT * FROM permission_requests ORDER BY created_at DESC").all()) as Array<Record<string, unknown>>;
-    return rows.map((row) => ({ requestId: String(row.request_id), taskId: row.task_id ? String(row.task_id) : null, connectorId: row.connector_id ? String(row.connector_id) : null, permission: String(row.permission), scope: String(row.scope), status: row.status as PermissionRequestRecord["status"], createdAt: String(row.created_at), resolvedAt: row.resolved_at ? String(row.resolved_at) : null, resolvedBy: row.resolved_by ? String(row.resolved_by) : null }));
+    return rows.map((row) => ({ requestId: String(row.request_id), taskId: row.task_id ? String(row.task_id) : null, connectorId: row.connector_id ? String(row.connector_id) : null, permission: String(row.permission), scope: String(row.scope), status: row.status as PermissionRequestRecord["status"], createdAt: String(row.created_at), resolvedAt: row.resolved_at ? String(row.resolved_at) : null, resolvedBy: row.resolved_by ? String(row.resolved_by) : null, ownerUserId: String(row.owner_user_id ?? "system"), workspaceId: String(row.workspace_id ?? "default") }));
   }
 
   getPermissionRequest(requestId: string): PermissionRequestRecord | null {

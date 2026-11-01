@@ -25,27 +25,29 @@ async function main(): Promise<void> {
   const serverUrl = `ws://127.0.0.1:${address.port}/connect`;
   let connector: ConnectorClient | undefined;
   try {
-    const pairing = await (await fetch(`${httpUrl}/v1/connectors/pairing`, { method: "POST" })).json() as { pairingCode: string };
+    const account = await (await fetch(`${httpUrl}/v1/auth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "task-owner@example.com", password: "task owner password" }) })).json() as { token: string };
+    const authHeaders = { authorization: `Bearer ${account.token}`, "content-type": "application/json" };
+    const pairing = await (await fetch(`${httpUrl}/v1/connectors/pairing`, { method: "POST", headers: authHeaders })).json() as { pairingCode: string };
     connector = new ConnectorClient({ serverUrl, pairingCode: pairing.pairingCode, core: new ConnectorCore({ permissions: ["connector.health"] }) });
     await connector.start();
     const identity = JSON.parse(readFileSync("./.data/connector/identity.json", "utf8")) as { connectorId: string };
-    const create = await fetch(`${httpUrl}/v1/connectors/${identity.connectorId}/tasks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ operation: "health.check", timeoutMs: 5_000 }) });
+    const create = await fetch(`${httpUrl}/v1/connectors/${identity.connectorId}/tasks`, { method: "POST", headers: authHeaders, body: JSON.stringify({ operation: "health.check", timeoutMs: 5_000 }) });
     assert.equal(create.status, 202);
     const created = await create.json() as { task: { taskId: string; status: string } };
     assert.equal(["queued", "running"].includes(created.task.status), true);
-    const completed = await waitFor(async () => await (await fetch(`${httpUrl}/v1/tasks/${created.task.taskId}`)).json() as { task: { status: string; progress: number; result?: Record<string, unknown> } }, (value) => value.task.status === "succeeded");
+    const completed = await waitFor(async () => await (await fetch(`${httpUrl}/v1/tasks/${created.task.taskId}`, { headers: authHeaders })).json() as { task: { status: string; progress: number; result?: Record<string, unknown> } }, (value) => value.task.status === "succeeded");
     assert.equal(completed.task.progress, 100);
     assert.equal(completed.task.result?.healthy, true);
 
-    const cancelCreate = await fetch(`${httpUrl}/v1/connectors/${identity.connectorId}/tasks`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ operation: "health.check", input: { delayMs: 2_000 }, timeoutMs: 5_000 }) });
+    const cancelCreate = await fetch(`${httpUrl}/v1/connectors/${identity.connectorId}/tasks`, { method: "POST", headers: authHeaders, body: JSON.stringify({ operation: "health.check", input: { delayMs: 2_000 }, timeoutMs: 5_000 }) });
     const cancelTask = await cancelCreate.json() as { task: { taskId: string } };
-    const cancel = await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}/cancel`, { method: "POST" });
+    const cancel = await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}/cancel`, { method: "POST", headers: authHeaders });
     assert.equal(cancel.status, 202);
-    const cancelled = await (await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}`)).json() as { task: { status: string } };
+    const cancelled = await (await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}`, { headers: authHeaders })).json() as { task: { status: string } };
     assert.equal(cancelled.task.status, "cancelled");
-    const retry = await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}/retry`, { method: "POST" });
+    const retry = await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}/retry`, { method: "POST", headers: authHeaders });
     assert.equal(retry.status, 202);
-    const retried = await waitFor(async () => await (await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}`)).json() as { task: { status: string; attempts: number } }, (value) => value.task.status === "succeeded");
+    const retried = await waitFor(async () => await (await fetch(`${httpUrl}/v1/tasks/${cancelTask.task.taskId}`, { headers: authHeaders })).json() as { task: { status: string; attempts: number } }, (value) => value.task.status === "succeeded");
     assert.equal(retried.task.attempts, 2);
     console.log("Phase 1 task lifecycle passed: create, dispatch, progress, persisted completion, status retrieval, and cancellation.");
   } finally {

@@ -25,12 +25,13 @@ export class TaskOrchestrator {
     private readonly socketForConnector: (connectorId: string) => WebSocket | undefined,
   ) {}
 
-  createOrDispatch(input: { connectorId: string; operation: OperationRequest["operation"]; taskInput?: Record<string, unknown>; timeoutMs?: number }): { task: ReturnType<ConnectorService["getTask"]>; permissionRequest?: PermissionRequestRecord } {
+  createOrDispatch(input: { connectorId: string; operation: OperationRequest["operation"]; taskInput?: Record<string, unknown>; timeoutMs?: number; ownerUserId?: string; workspaceId?: string }): { task: ReturnType<ConnectorService["getTask"]>; permissionRequest?: PermissionRequestRecord } {
     const connector = this.connectors.getConnector(input.connectorId);
     if (!connector || connector.status === "revoked") throw new Error("CONNECTOR_NOT_AVAILABLE");
+    if (input.ownerUserId && connector.ownerUserId !== "system" && (connector.ownerUserId !== input.ownerUserId || connector.workspaceId !== (input.workspaceId ?? "default"))) throw new Error("CONNECTOR_ACCESS_DENIED");
     const permission = requiredPermission(input.operation);
     if (!connector.permissions.includes(permission)) {
-      const request: PermissionRequestRecord = { requestId: randomUUID(), taskId: null, connectorId: input.connectorId, permission, scope: "connector", status: "pending", createdAt: new Date().toISOString(), resolvedAt: null, resolvedBy: null };
+      const request: PermissionRequestRecord = { requestId: randomUUID(), taskId: null, connectorId: input.connectorId, permission, scope: "connector", status: "pending", createdAt: new Date().toISOString(), resolvedAt: null, resolvedBy: null, ownerUserId: input.ownerUserId ?? connector.ownerUserId ?? "system", workspaceId: input.workspaceId ?? connector.workspaceId ?? "default" };
       this.database.createPermissionRequest(request);
       this.database.addAudit("permission.requested", input.connectorId, { requestId: request.requestId, permission, operation: input.operation });
       return { task: null, permissionRequest: request };

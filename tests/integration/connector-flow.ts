@@ -15,7 +15,9 @@ async function main(): Promise<void> {
   const httpUrl = `http://127.0.0.1:${address.port}`;
 
   try {
-    const pairingResponse = await fetch(`${httpUrl}/v1/connectors/pairing`, { method: "POST" });
+    const account = await (await fetch(`${httpUrl}/v1/auth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "connector-owner@example.com", password: "connector owner password" }) })).json() as { token: string };
+    const authHeaders = { authorization: `Bearer ${account.token}` };
+    const pairingResponse = await fetch(`${httpUrl}/v1/connectors/pairing`, { method: "POST", headers: authHeaders });
     assert.equal(pairingResponse.status, 201);
     const pairing = await pairingResponse.json() as { pairingId: string; pairingCode: string; expiresAt: string; qrPayload: string };
     assert.match(pairing.pairingId, /^[0-9a-f-]{36}$/);
@@ -27,7 +29,7 @@ async function main(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     const identity = JSON.parse(readFileSync("./.data/connector/identity.json", "utf8")) as { connectorId: string };
-    const statusResponse = await fetch(`${httpUrl}/v1/connectors/${identity.connectorId}`);
+    const statusResponse = await fetch(`${httpUrl}/v1/connectors/${identity.connectorId}`, { headers: authHeaders });
     assert.equal(statusResponse.status, 200);
     const status = await statusResponse.json() as { status: string; lastSeenAt: string | null };
     assert.equal(status.status, "online");

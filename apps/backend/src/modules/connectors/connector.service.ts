@@ -15,18 +15,19 @@ export class ConnectorService {
     this.onTaskEvent?.({ taskId, type, payload });
   }
 
-  createPairing(): { pairingId: string; pairingCode: string; expiresAt: string; qrPayload: string } {
+  createPairing(ownerUserId = "system", workspaceId = "default"): { pairingId: string; pairingCode: string; expiresAt: string; qrPayload: string } {
     const pairingId = randomUUID();
     const pairingCode = `GLA-${randomBytes(2).toString("hex").toUpperCase()}-${randomBytes(2).toString("hex").toUpperCase()}`;
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-    this.database.createPairing(pairingId, pairingCode, expiresAt);
+    this.database.createPairing(pairingId, pairingCode, expiresAt, ownerUserId, workspaceId);
     this.database.addAudit("pairing.created", null, { pairingId, expiresAt });
     const qrPayload = `golden-agent://pair?code=${encodeURIComponent(pairingCode)}&expiresAt=${encodeURIComponent(expiresAt)}`;
     return { pairingId, pairingCode, expiresAt, qrPayload };
   }
 
   pair(request: PairingRequest, _socket: WebSocket): PairingAccepted | null {
-    if (!this.database.consumePairing(request.pairingCode)) return null;
+    const pairing = this.database.consumePairing(request.pairingCode);
+    if (!pairing) return null;
     const deviceId = randomUUID();
     const accessToken = randomBytes(32).toString("hex");
     const accessTokenHash = createHash("sha256").update(accessToken).digest("hex");
@@ -41,6 +42,8 @@ export class ConnectorService {
       tokenExpiresAt,
       permissions: DEFAULT_PERMISSIONS,
       lastSeenAt: null,
+      ownerUserId: pairing.ownerUserId,
+      workspaceId: pairing.workspaceId,
     });
     this.database.addAudit("connector.paired", request.connectorId, { deviceId, platform: request.platform });
     return { type: "pairing.accepted", connectorId: request.connectorId, deviceId, accessToken, permissions: DEFAULT_PERMISSIONS, tokenExpiresAt };
@@ -96,7 +99,7 @@ export class ConnectorService {
     if (!connector || connector.status === "revoked") return null;
     const requiredPermission: Permission = operation === "models.discover" ? "model.discovery" : operation === "models.execute" || operation === "models.stream" ? "model.use" : operation === "browser.open" || operation === "browser.navigate" || operation === "browser.inspect" || operation === "browser.screenshot" || operation === "browser.click" || operation === "browser.type" || operation === "browser.close" ? "browser.use" : operation === "filesystem.list" || operation === "filesystem.read" || operation === "artifact.collect" ? "filesystem.read" : operation === "filesystem.write" ? "filesystem.write" : operation === "git.status" ? "git.read" : operation === "process.list" || operation === "process.start" || operation === "process.stop" ? "process.manage" : operation === "terminal.execute" ? "terminal.execute" : operation === "testing.run" ? "testing.execute" : operation === "building.run" ? "building.execute" : "connector.health";
     if (!connector.permissions.includes(requiredPermission)) return null;
-    const task: TaskRecord = { taskId: randomUUID(), connectorId, operation, input, status: "queued", progress: 0, progressMessage: null, result: null, error: null, timeoutMs: Math.min(Math.max(timeoutMs, 100), 300_000), attempts: 0, artifactMetadata: [], createdAt: new Date().toISOString(), startedAt: null, finishedAt: null };
+    const task: TaskRecord = { taskId: randomUUID(), connectorId, operation, input, status: "queued", progress: 0, progressMessage: null, result: null, error: null, timeoutMs: Math.min(Math.max(timeoutMs, 100), 300_000), attempts: 0, artifactMetadata: [], createdAt: new Date().toISOString(), startedAt: null, finishedAt: null, ownerUserId: connector.ownerUserId ?? "system", workspaceId: connector.workspaceId ?? "default" };
     this.database.createTask(task);
     this.database.addAudit("task.created", connectorId, { taskId: task.taskId, operation });
     this.taskEvent(task.taskId, "task.created", { connectorId, operation });

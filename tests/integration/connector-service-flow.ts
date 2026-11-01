@@ -11,7 +11,8 @@ async function main(): Promise<void> {
   const address = app.server.address();
   if (!address || typeof address === "string") throw new Error("Backend did not start");
   process.env.CONNECTOR_SERVER_URL = `ws://127.0.0.1:${address.port}/connect`;
-  const pairing = await (await fetch(`http://127.0.0.1:${address.port}/v1/connectors/pairing`, { method: "POST" })).json() as { pairingCode: string };
+  const account = await (await fetch(`http://127.0.0.1:${address.port}/v1/auth/register`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "service-owner@example.com", password: "service owner password" }) })).json() as { token: string };
+  const pairing = await (await fetch(`http://127.0.0.1:${address.port}/v1/connectors/pairing`, { method: "POST", headers: { authorization: `Bearer ${account.token}` } })).json() as { pairingCode: string };
   const runtime = new ConnectorServiceRuntime(pairing.pairingCode);
   try {
     await runtime.start();
