@@ -3,6 +3,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { Database } from "./database/database.js";
 import { ConnectorService } from "./modules/connectors/connector.service.js";
 import { ConversationService } from "./modules/conversations/conversation.service.js";
+import { ConversationOrchestratorService } from "./modules/conversations/conversation-orchestrator.service.js";
 import { ModelRegistryService } from "./modules/models/model-registry.service.js";
 import { ModelGatewayService } from "./modules/models/model-gateway.service.js";
 import { TaskOrchestrator } from "./modules/tasks/task-orchestrator.service.js";
@@ -15,6 +16,7 @@ export interface BackendApp {
   database: Database;
   connectors: ConnectorService;
   conversations: ConversationService;
+  conversationOrchestrator: ConversationOrchestratorService;
   models: ModelRegistryService;
   modelGateway: ModelGatewayService;
   orchestrator: TaskOrchestrator;
@@ -51,6 +53,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   const conversations = new ConversationService(database);
   const models = new ModelRegistryService(database);
   const modelGateway = new ModelGatewayService(database);
+  const conversationOrchestrator = new ConversationOrchestratorService(conversations, modelGateway);
   const activeSockets = new Map<string, WebSocket>();
   const sockets = new Set<WebSocket>();
   const workspaceSockets = new Set<WebSocket>();
@@ -141,6 +144,22 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         if (!content.trim()) return json(response, 400, { ok: false, error: "MESSAGE_CONTENT_REQUIRED" });
         const message = conversations.addMessage(messageMatch[1], role, content, (body.metadata ?? {}) as Record<string, unknown>);
         return message ? json(response, 201, { ok: true, message }) : json(response, 404, { ok: false, error: "CONVERSATION_NOT_FOUND" });
+      }
+      const respondMatch = request.url?.match(/^\/v1\/conversations\/([^/]+)\/respond$/);
+      if (request.method === "POST" && respondMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const existingConversation = conversations.get(respondMatch[1]);
+        if (!existingConversation || !database.getWorkspaceMember(existingConversation.conversation.workspaceId, authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        const body = await requestBody(request);
+        if (typeof body.modelId !== "string" || typeof body.content !== "string") return json(response, 400, { ok: false, error: "MODEL_AND_CONTENT_REQUIRED" });
+        response.writeHead(200, { "content-type": "application/x-ndjson", "access-control-allow-origin": "*" });
+        try {
+          for await (const event of conversationOrchestrator.respond({ conversationId: respondMatch[1], modelId: body.modelId, content: body.content, workspaceId: existingConversation.conversation.workspaceId, timeoutMs: Number(body.timeoutMs ?? 120_000) })) response.write(`${JSON.stringify(event)}\n`);
+          response.end();
+        } catch (error) {
+          response.end(`${JSON.stringify({ type: "error", error: error instanceof Error ? error.message : "MODEL_EXECUTION_FAILED" })}\n`);
+        }
+        return;
       }
       if (request.method === "GET" && request.url === "/v1/providers") {
         if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
@@ -400,6 +419,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     database,
     connectors,
     conversations,
+    conversationOrchestrator,
     models,
     modelGateway,
     orchestrator,

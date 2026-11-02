@@ -51,6 +51,14 @@ async function main(): Promise<void> {
     assert.match(streamed, /gateway/);
     const discovered = await (await fetch(`${base}/v1/providers/${provider.provider.providerId}/discover`, { method: "POST", headers: authHeaders })).json() as { models: Array<{ id: string }> };
     assert.equal(discovered.models[0]?.id, "gateway-model");
+    const responseText = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}/respond`, { method: "POST", headers: authHeaders, body: JSON.stringify({ modelId: model.model.modelId, content: "Use the model gateway" }) })).text();
+    const responseEvents = responseText.trim().split("\n").map((line) => JSON.parse(line) as { type: string; chunk?: string });
+    assert.equal(responseEvents[0]?.type, "user.message");
+    assert.equal(responseEvents.filter((event) => event.type === "assistant.chunk").map((event) => event.chunk ?? "").join(""), "gateway ok");
+    assert.equal(responseEvents.at(-1)?.type, "assistant.done");
+    const respondedDetail = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}`, { headers: authHeaders })).json() as { messages: Array<{ role: string; content: string }> };
+    assert.equal(respondedDetail.messages.at(-1)?.role, "assistant");
+    assert.equal(respondedDetail.messages.at(-1)?.content, "gateway ok");
     const connectorId = randomUUID();
     app.database.createConnector({ connectorId, deviceId: randomUUID(), deviceName: "Workspace test connector", platform: "linux", status: "online", accessToken: null, tokenExpiresAt: null, permissions: ["connector.health"], capabilities: ["system.info", "terminal.execute"], lastSeenAt: new Date().toISOString(), ownerUserId: registered.user.userId, workspaceId: "default" });
     const devices = await (await fetch(`${base}/v1/connectors`, { headers: authHeaders })).json() as { connectors: Array<{ connectorId: string; capabilities: string[] }> };
@@ -65,7 +73,7 @@ async function main(): Promise<void> {
     const resolved = await (await fetch(`${base}/v1/permission-requests/${taskRequest.permissionRequest.requestId}/resolve`, { method: "POST", headers: authHeaders, body: JSON.stringify({ approved: true, resolvedBy: "integration-test" }) })).json() as { request: { status: string } };
     assert.equal(resolved.request.status, "approved");
     assert.ok(app.database.getConnector(connectorId)?.permissions.includes("terminal.execute"));
-    console.log("Workspace backend flow passed: conversations, messages, providers, models, and persistence APIs verified.");
+    console.log("Workspace backend flow passed: conversations, messages, model gateway streaming, providers, models, and persistence APIs verified.");
   } finally {
     await new Promise<void>((resolve) => ollama.close(() => resolve()));
     await app.close();
