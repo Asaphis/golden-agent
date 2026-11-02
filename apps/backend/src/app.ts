@@ -9,6 +9,8 @@ import { ModelGatewayService } from "./modules/models/model-gateway.service.js";
 import { TaskOrchestrator } from "./modules/tasks/task-orchestrator.service.js";
 import { AccountService } from "./modules/auth/account.service.js";
 import { WorkspaceAccessService } from "./modules/workspaces/workspace-access.service.js";
+import { ToolRegistryService } from "./modules/tools/tool-registry.service.js";
+import { AgentToolService } from "./modules/tools/agent-tool.service.js";
 import type { AuthenticateMessage, ConnectorMessage, HeartbeatMessage, OperationResult, PairingRequest, Permission, TaskProgressMessage, PermissionsAcknowledgedMessage } from "../../../packages/protocol/src/index.js";
 
 export interface BackendApp {
@@ -22,6 +24,8 @@ export interface BackendApp {
   orchestrator: TaskOrchestrator;
   accounts: AccountService;
   workspaceAccess: WorkspaceAccessService;
+  tools: ToolRegistryService;
+  agentTools: AgentToolService;
   close(): Promise<void>;
 }
 
@@ -50,6 +54,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   const database = new Database(databasePath);
   const accounts = new AccountService(database);
   const workspaceAccess = new WorkspaceAccessService(database);
+  const tools = new ToolRegistryService();
   const conversations = new ConversationService(database);
   const models = new ModelRegistryService(database);
   const modelGateway = new ModelGatewayService(database);
@@ -62,6 +67,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     for (const socket of workspaceSockets) if (socket.readyState === 1) socket.send(message);
   });
   const orchestrator = new TaskOrchestrator(database, connectors, (connectorId) => activeSockets.get(connectorId));
+  const agentTools = new AgentToolService(tools, orchestrator);
   const rateWindows = new Map<string, { startedAt: number; count: number }>();
   const server = createServer(async (request, response) => {
     try {
@@ -169,6 +175,26 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
         const body = await requestBody(request);
         return json(response, 201, { ok: true, provider: models.registerProvider({ name: String(body.name ?? ""), type: String(body.type ?? ""), config: (body.config ?? {}) as Record<string, unknown>, ownerUserId: authenticated.user.userId, workspaceId: "default" }) });
+      }
+      if (request.method === "GET" && request.url === "/v1/tools") {
+        if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        return json(response, 200, { ok: true, tools: tools.list() });
+      }
+      const toolExecuteMatch = request.url?.match(/^\/v1\/conversations\/([^/]+)\/tools$/);
+      if (request.method === "POST" && toolExecuteMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const conversation = conversations.get(toolExecuteMatch[1]);
+        if (!conversation || !database.getWorkspaceMember(conversation.conversation.workspaceId, authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        const body = await requestBody(request);
+        if (typeof body.tool !== "string" || typeof body.connectorId !== "string") return json(response, 400, { ok: false, error: "TOOL_AND_CONNECTOR_REQUIRED" });
+        try {
+          const result = agentTools.execute({ tool: body.tool, connectorId: body.connectorId, arguments: (body.arguments ?? {}) as Record<string, unknown>, ownerUserId: authenticated.user.userId, workspaceId: conversation.conversation.workspaceId, timeoutMs: Number(body.timeoutMs ?? 30_000) });
+          return json(response, result.permissionRequest ? 202 : 201, { ok: true, ...result });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "TOOL_EXECUTION_FAILED";
+          const status = message === "TOOL_NOT_FOUND" ? 404 : message.startsWith("TOOL_INPUT_REQUIRED") ? 400 : message === "CONNECTOR_ACCESS_DENIED" ? 403 : 409;
+          return json(response, status, { ok: false, error: message });
+        }
       }
       if (request.method === "GET" && request.url === "/v1/models") {
         if (!authenticated || !database.getWorkspaceMember("default", authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
@@ -425,6 +451,8 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
     orchestrator,
     accounts,
     workspaceAccess,
+    tools,
+    agentTools,
     close: async () => new Promise((resolve) => {
       let settled = false;
       const finish = () => { if (settled) return; settled = true; database.close(); resolve(); };

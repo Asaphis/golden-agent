@@ -59,10 +59,17 @@ async function main(): Promise<void> {
     const respondedDetail = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}`, { headers: authHeaders })).json() as { messages: Array<{ role: string; content: string }> };
     assert.equal(respondedDetail.messages.at(-1)?.role, "assistant");
     assert.equal(respondedDetail.messages.at(-1)?.content, "gateway ok");
+    const toolCatalog = await (await fetch(`${base}/v1/tools`, { headers: authHeaders })).json() as { tools: Array<{ name: string; permission: string }> };
+    assert.equal(toolCatalog.tools.some((tool) => tool.name === "terminal_execute" && tool.permission === "terminal.execute"), true);
     const connectorId = randomUUID();
     app.database.createConnector({ connectorId, deviceId: randomUUID(), deviceName: "Workspace test connector", platform: "linux", status: "online", accessToken: null, tokenExpiresAt: null, permissions: ["connector.health"], capabilities: ["system.info", "terminal.execute"], lastSeenAt: new Date().toISOString(), ownerUserId: registered.user.userId, workspaceId: "default" });
     const devices = await (await fetch(`${base}/v1/connectors`, { headers: authHeaders })).json() as { connectors: Array<{ connectorId: string; capabilities: string[] }> };
     assert.equal(devices.connectors.find((device) => device.connectorId === connectorId)?.capabilities[0], "system.info");
+    const invalidTool = await fetch(`${base}/v1/conversations/${created.conversation.conversationId}/tools`, { method: "POST", headers: authHeaders, body: JSON.stringify({ tool: "terminal_execute", connectorId, arguments: {} }) });
+    assert.equal(invalidTool.status, 400);
+    const toolRequest = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}/tools`, { method: "POST", headers: authHeaders, body: JSON.stringify({ tool: "terminal_execute", connectorId, arguments: { command: "pwd" } }) })).json() as { status: string; permissionRequest: { permission: string } };
+    assert.equal(toolRequest.status, "permission_required");
+    assert.equal(toolRequest.permissionRequest.permission, "terminal.execute");
     const healthTask = app.connectors.createTask(connectorId, "health.check");
     assert.ok(healthTask);
     const taskEvents = await (await fetch(`${base}/v1/tasks/${healthTask.taskId}/events`, { headers: authHeaders })).json() as { events: Array<{ type: string }> };
