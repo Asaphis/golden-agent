@@ -67,7 +67,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   });
   const orchestrator = new TaskOrchestrator(database, connectors, (connectorId) => activeSockets.get(connectorId));
   const agentTools = new AgentToolService(tools, orchestrator);
-  const conversationOrchestrator = new ConversationOrchestratorService(conversations, modelGateway, agentTools);
+  const conversationOrchestrator = new ConversationOrchestratorService(conversations, modelGateway, agentTools, database);
   const rateWindows = new Map<string, { startedAt: number; count: number }>();
   const server = createServer(async (request, response) => {
     try {
@@ -165,6 +165,22 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         } catch (error) {
           response.end(`${JSON.stringify({ type: "error", error: error instanceof Error ? error.message : "MODEL_EXECUTION_FAILED" })}\n`);
         }
+        return;
+      }
+      const continueMatch = request.url?.match(/^\/v1\/conversations\/([^/]+)\/continue$/);
+      if (request.method === "POST" && continueMatch) {
+        if (!authenticated) return json(response, 401, { ok: false, error: "AUTHENTICATION_REQUIRED" });
+        const existingConversation = conversations.get(continueMatch[1]);
+        if (!existingConversation || !database.getWorkspaceMember(existingConversation.conversation.workspaceId, authenticated.user.userId)) return json(response, 403, { ok: false, error: "WORKSPACE_ACCESS_DENIED" });
+        const body = await requestBody(request);
+        if (typeof body.modelId !== "string" || typeof body.taskId !== "string") return json(response, 400, { ok: false, error: "MODEL_AND_TASK_REQUIRED" });
+        response.writeHead(200, { "content-type": "application/x-ndjson", "access-control-allow-origin": "*" });
+        try {
+          for await (const event of conversationOrchestrator.continueAfterTask({ conversationId: continueMatch[1], modelId: body.modelId, taskId: body.taskId, workspaceId: existingConversation.conversation.workspaceId, ownerUserId: authenticated.user.userId, timeoutMs: Number(body.timeoutMs ?? 120_000) })) response.write(`${JSON.stringify(event)}\n`);
+        } catch (error) {
+          response.write(`${JSON.stringify({ type: "error", error: error instanceof Error ? error.message : "CONTINUATION_FAILED" })}\n`);
+        }
+        response.end();
         return;
       }
       if (request.method === "GET" && request.url === "/v1/providers") {

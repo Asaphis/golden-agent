@@ -21,7 +21,7 @@ async function main(): Promise<void> {
       request.on("data", (chunk) => { body += String(chunk); });
       request.on("end", () => {
         const input = JSON.parse(body) as { stream?: boolean; prompt?: string };
-        const toolCall = input.prompt?.includes("request terminal") ? '<tool_call>{"tool":"terminal_execute","arguments":{"command":"pwd"}}</tool_call>' : "gateway ok";
+        const toolCall = input.prompt?.includes("request terminal") && !input.prompt.includes("TOOL:") ? '<tool_call>{"tool":"terminal_execute","arguments":{"command":"pwd"}}</tool_call>' : "gateway ok";
         if (input.stream) { response.setHeader("transfer-encoding", "chunked"); response.write(JSON.stringify({ response: toolCall.slice(0, Math.ceil(toolCall.length / 2)), done: false }) + "\n"); response.end(JSON.stringify({ response: toolCall.slice(Math.ceil(toolCall.length / 2)), done: true }) + "\n"); }
         else response.end(JSON.stringify({ response: toolCall, done: true }));
       });
@@ -77,6 +77,12 @@ async function main(): Promise<void> {
     assert.equal(modelToolEvents.some((event) => event.type === "tool.requested" && event.tool?.status === "permission_required" && event.tool.permissionRequest?.permission === "terminal.execute"), true);
     const healthTask = app.connectors.createTask(connectorId, "health.check");
     assert.ok(healthTask);
+    app.database.updateTask(healthTask.taskId, { status: "succeeded", progress: 100, result: { healthy: true, source: "connector" }, finishedAt: new Date().toISOString() });
+    const continuationText = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}/continue`, { method: "POST", headers: authHeaders, body: JSON.stringify({ modelId: model.model.modelId, taskId: healthTask.taskId }) })).text();
+    const continuationEvents = continuationText.trim().split("\n").map((line) => JSON.parse(line) as { type: string; result?: { healthy?: boolean }; chunk?: string });
+    assert.equal(continuationEvents.some((event) => event.type === "tool.result" && event.result?.healthy === true), true);
+    assert.equal(continuationEvents.filter((event) => event.type === "assistant.chunk").map((event) => event.chunk ?? "").join(""), "gateway ok");
+    assert.equal(continuationEvents.at(-1)?.type, "assistant.done");
     const taskEvents = await (await fetch(`${base}/v1/tasks/${healthTask.taskId}/events`, { headers: authHeaders })).json() as { events: Array<{ type: string }> };
     assert.equal(taskEvents.events[0]?.type, "task.created");
     const taskRequest = await (await fetch(`${base}/v1/tasks`, { method: "POST", headers: authHeaders, body: JSON.stringify({ connectorId, operation: "terminal.execute", input: { command: "pwd" } }) })).json() as { status: string; permissionRequest: { requestId: string; permission: string } };
