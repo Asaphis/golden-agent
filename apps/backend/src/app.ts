@@ -58,7 +58,6 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   const conversations = new ConversationService(database);
   const models = new ModelRegistryService(database);
   const modelGateway = new ModelGatewayService(database);
-  const conversationOrchestrator = new ConversationOrchestratorService(conversations, modelGateway);
   const activeSockets = new Map<string, WebSocket>();
   const sockets = new Set<WebSocket>();
   const workspaceSockets = new Set<WebSocket>();
@@ -68,6 +67,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
   });
   const orchestrator = new TaskOrchestrator(database, connectors, (connectorId) => activeSockets.get(connectorId));
   const agentTools = new AgentToolService(tools, orchestrator);
+  const conversationOrchestrator = new ConversationOrchestratorService(conversations, modelGateway, agentTools);
   const rateWindows = new Map<string, { startedAt: number; count: number }>();
   const server = createServer(async (request, response) => {
     try {
@@ -160,7 +160,7 @@ export function createBackendApp(databasePath = process.env.DATABASE_PATH): Back
         if (typeof body.modelId !== "string" || typeof body.content !== "string") return json(response, 400, { ok: false, error: "MODEL_AND_CONTENT_REQUIRED" });
         response.writeHead(200, { "content-type": "application/x-ndjson", "access-control-allow-origin": "*" });
         try {
-          for await (const event of conversationOrchestrator.respond({ conversationId: respondMatch[1], modelId: body.modelId, content: body.content, workspaceId: existingConversation.conversation.workspaceId, timeoutMs: Number(body.timeoutMs ?? 120_000) })) response.write(`${JSON.stringify(event)}\n`);
+          for await (const event of conversationOrchestrator.respond({ conversationId: respondMatch[1], modelId: body.modelId, content: body.content, workspaceId: existingConversation.conversation.workspaceId, ownerUserId: authenticated.user.userId, connectorId: typeof body.connectorId === "string" ? body.connectorId : undefined, timeoutMs: Number(body.timeoutMs ?? 120_000) })) response.write(`${JSON.stringify(event)}\n`);
           response.end();
         } catch (error) {
           response.end(`${JSON.stringify({ type: "error", error: error instanceof Error ? error.message : "MODEL_EXECUTION_FAILED" })}\n`);

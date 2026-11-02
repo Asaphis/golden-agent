@@ -20,9 +20,10 @@ async function main(): Promise<void> {
       let body = "";
       request.on("data", (chunk) => { body += String(chunk); });
       request.on("end", () => {
-        const input = JSON.parse(body) as { stream?: boolean };
-        if (input.stream) { response.setHeader("transfer-encoding", "chunked"); response.write(JSON.stringify({ response: "gateway ", done: false }) + "\n"); response.end(JSON.stringify({ response: "ok", done: true }) + "\n"); }
-        else response.end(JSON.stringify({ response: "gateway ok", done: true }));
+        const input = JSON.parse(body) as { stream?: boolean; prompt?: string };
+        const toolCall = input.prompt?.includes("request terminal") ? '<tool_call>{"tool":"terminal_execute","arguments":{"command":"pwd"}}</tool_call>' : "gateway ok";
+        if (input.stream) { response.setHeader("transfer-encoding", "chunked"); response.write(JSON.stringify({ response: toolCall.slice(0, Math.ceil(toolCall.length / 2)), done: false }) + "\n"); response.end(JSON.stringify({ response: toolCall.slice(Math.ceil(toolCall.length / 2)), done: true }) + "\n"); }
+        else response.end(JSON.stringify({ response: toolCall, done: true }));
       });
       return;
     }
@@ -48,7 +49,8 @@ async function main(): Promise<void> {
     const executed = await (await fetch(`${base}/v1/models/${model.model.modelId}/execute`, { method: "POST", headers: authHeaders, body: JSON.stringify({ prompt: "hello" }) })).json() as { result: { response: string } };
     assert.equal(executed.result.response, "gateway ok");
     const streamed = await (await fetch(`${base}/v1/models/${model.model.modelId}/stream`, { method: "POST", headers: authHeaders, body: JSON.stringify({ prompt: "hello" }) })).text();
-    assert.match(streamed, /gateway/);
+    const streamedEvents = streamed.trim().split("\n").map((line) => JSON.parse(line) as { type: string; chunk?: string });
+    assert.equal(streamedEvents.filter((event) => event.type === "model.chunk").map((event) => event.chunk ?? "").join(""), "gateway ok");
     const discovered = await (await fetch(`${base}/v1/providers/${provider.provider.providerId}/discover`, { method: "POST", headers: authHeaders })).json() as { models: Array<{ id: string }> };
     assert.equal(discovered.models[0]?.id, "gateway-model");
     const responseText = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}/respond`, { method: "POST", headers: authHeaders, body: JSON.stringify({ modelId: model.model.modelId, content: "Use the model gateway" }) })).text();
@@ -70,6 +72,9 @@ async function main(): Promise<void> {
     const toolRequest = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}/tools`, { method: "POST", headers: authHeaders, body: JSON.stringify({ tool: "terminal_execute", connectorId, arguments: { command: "pwd" } }) })).json() as { status: string; permissionRequest: { permission: string } };
     assert.equal(toolRequest.status, "permission_required");
     assert.equal(toolRequest.permissionRequest.permission, "terminal.execute");
+    const modelToolResponse = await (await fetch(`${base}/v1/conversations/${created.conversation.conversationId}/respond`, { method: "POST", headers: authHeaders, body: JSON.stringify({ modelId: model.model.modelId, connectorId, content: "request terminal" }) })).text();
+    const modelToolEvents = modelToolResponse.trim().split("\n").map((line) => JSON.parse(line) as { type: string; tool?: { status?: string; permissionRequest?: { permission: string } } });
+    assert.equal(modelToolEvents.some((event) => event.type === "tool.requested" && event.tool?.status === "permission_required" && event.tool.permissionRequest?.permission === "terminal.execute"), true);
     const healthTask = app.connectors.createTask(connectorId, "health.check");
     assert.ok(healthTask);
     const taskEvents = await (await fetch(`${base}/v1/tasks/${healthTask.taskId}/events`, { headers: authHeaders })).json() as { events: Array<{ type: string }> };
